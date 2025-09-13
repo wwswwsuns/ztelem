@@ -1,29 +1,52 @@
-# 网络设备遥测数据收集系统
+# ZTE遥测数据收集系统 (ZTelem)
 
-一个高性能的网络设备遥测数据收集和存储系统，支持多种网络设备的实时数据采集，使用PostgreSQL + TimescaleDB进行时序数据存储。
+一个专为ZTE网络设备设计的高性能遥测数据收集和存储系统，支持大规模网络设备的实时数据采集，使用PostgreSQL + TimescaleDB进行时序数据存储和分析。
+
+[![GitHub Stars](https://img.shields.io/github/stars/wwswwsuns/ztelem?style=flat-square)](https://github.com/wwswwsuns/ztelem/stargazers)
+[![GitHub Issues](https://img.shields.io/github/issues/wwswwsuns/ztelem?style=flat-square)](https://github.com/wwswwsuns/ztelem/issues)
+[![GitHub License](https://img.shields.io/github/license/wwswwsuns/ztelem?style=flat-square)](https://github.com/wwswwsuns/ztelem/blob/main/LICENSE)
+[![Go Version](https://img.shields.io/badge/Go-1.19+-blue?style=flat-square)](https://golang.org/)
 
 ## 🚀 功能特性
 
-- **高性能数据收集**：支持大规模网络设备并发连接
-- **时序数据存储**：基于TimescaleDB的高效时序数据管理
-- **多数据类型支持**：平台指标、接口指标、子接口指标
-- **缓冲批量写入**：优化数据库写入性能
-- **灵活配置**：支持多环境配置管理
-- **数据保留策略**：自动数据清理和存储优化
+- **🔥 高性能数据收集**：支持500+网络设备并发连接，每分钟处理20K-30K数据记录
+- **📊 时序数据存储**：基于TimescaleDB的高效时序数据管理，支持数据压缩和分区
+- **📈 多数据类型支持**：
+  - 平台指标：CPU、内存、温度、风扇状态
+  - 接口指标：流量统计、错误包、接口状态
+  - 子接口指标：VLAN数据、子接口流量
+- **⚡ 缓冲批量写入**：智能缓冲机制，优化数据库写入性能
+- **🔧 灵活配置**：支持生产、测试、开发多环境配置管理
+- **🗄️ 数据保留策略**：自动数据清理和存储优化，支持自定义保留期
+- **🛡️ 安全设计**：数据库连接池、错误重试、优雅关闭
+- **📝 完整日志**：结构化日志记录，支持文件和控制台输出
 
 ## 📋 系统要求
 
-- Go 1.19+
-- PostgreSQL 12+
-- TimescaleDB 2.0+
-- Linux/macOS/Windows
+### 基础环境
+- **Go**: 1.19+ (推荐 1.21+)
+- **PostgreSQL**: 12+ (推荐 14+)
+- **TimescaleDB**: 2.0+ (推荐 2.11+)
+- **操作系统**: Linux/macOS/Windows
+
+### 硬件建议
+- **CPU**: 4核心+ (生产环境推荐8核心)
+- **内存**: 8GB+ (生产环境推荐16GB+)
+- **存储**: SSD硬盘，至少50GB可用空间
+- **网络**: 千兆网卡，稳定的网络连接
+
+### 生产环境规模支持
+- **设备数量**: 500+ 台网络设备
+- **数据吞吐**: 20K-30K 记录/分钟
+- **存储需求**: ~15GB/月 (30天保留策略)
+- **并发连接**: 1000+ 并发TCP连接
 
 ## 🛠️ 安装部署
 
 ### 1. 克隆项目
 ```bash
-git clone https://github.com/your-username/telemetry-system.git
-cd telemetry-system
+git clone https://github.com/wwswwsuns/ztelem.git
+cd ztelem
 ```
 
 ### 2. 安装依赖
@@ -34,7 +57,11 @@ go mod download
 ### 3. 数据库初始化
 ```bash
 # 创建数据库和表结构
-psql -h localhost -U postgres -f create_tables.sql
+PGPASSWORD=your_password psql -h localhost -U postgres -f create_tables.sql
+
+# 或者使用项目提供的部署脚本
+chmod +x deploy.sh
+./deploy.sh
 ```
 
 ### 4. 配置文件
@@ -50,8 +77,14 @@ vim config.yaml
 # 编译
 make build
 
-# 运行
+# 运行 (开发环境)
 ./bin/telemetry -config config.yaml
+
+# 运行 (生产环境)
+./bin/telemetry -config production-config-optimized.yaml
+
+# 后台运行
+nohup ./bin/telemetry -config production-config-optimized.yaml > /dev/null 2>&1 &
 ```
 
 ## 📊 数据模型
@@ -151,21 +184,59 @@ grep "ERROR" logs/telemetry.log
 
 ## 🤝 贡献指南
 
-1. Fork 项目
-2. 创建功能分支 (`git checkout -b feature/AmazingFeature`)
-3. 提交更改 (`git commit -m 'Add some AmazingFeature'`)
-4. 推送到分支 (`git push origin feature/AmazingFeature`)
-5. 创建 Pull Request
+欢迎贡献代码！请遵循以下步骤：
+
+1. **Fork 项目** - 点击右上角的 Fork 按钮
+2. **创建功能分支** 
+   ```bash
+   git checkout -b feature/AmazingFeature
+   ```
+3. **提交更改**
+   ```bash
+   git commit -m 'Add some AmazingFeature'
+   ```
+4. **推送到分支**
+   ```bash
+   git push origin feature/AmazingFeature
+   ```
+5. **创建 Pull Request** - 在GitHub上创建PR
+
+### 代码规范
+- 遵循Go语言官方代码规范
+- 添加必要的注释和文档
+- 确保所有测试通过
+- 更新相关文档
 
 ## 📄 许可证
 
 本项目采用 MIT 许可证 - 查看 [LICENSE](LICENSE) 文件了解详情。
 
+## ⭐ Star History
+
+如果这个项目对你有帮助，请给个Star支持一下！
+
+[![Star History Chart](https://api.star-history.com/svg?repos=wwswwsuns/ztelem&type=Date)](https://star-history.com/#wwswwsuns/ztelem&Date)
+
 ## 📞 联系方式
 
-- 项目链接：[https://github.com/your-username/telemetry-system](https://github.com/your-username/telemetry-system)
-- 问题反馈：[Issues](https://github.com/your-username/telemetry-system/issues)
+- 项目链接：[https://github.com/wwswwsuns/ztelem](https://github.com/wwswwsuns/ztelem)
+- 问题反馈：[Issues](https://github.com/wwswwsuns/ztelem/issues)
 
 ## 🙏 致谢
 
-感谢所有为这个项目做出贡献的开发者！
+感谢所有为这个项目做出贡献的开发者和以下开源项目：
+
+- [PostgreSQL](https://www.postgresql.org/) - 强大的开源关系数据库
+- [TimescaleDB](https://www.timescale.com/) - 时序数据库扩展
+- [Go](https://golang.org/) - 高效的编程语言
+- [Protocol Buffers](https://developers.google.com/protocol-buffers) - 数据序列化协议
+
+## 📈 项目统计
+
+![GitHub repo size](https://img.shields.io/github/repo-size/wwswwsuns/ztelem?style=flat-square)
+![GitHub code size](https://img.shields.io/github/languages/code-size/wwswwsuns/ztelem?style=flat-square)
+![GitHub last commit](https://img.shields.io/github/last-commit/wwswwsuns/ztelem?style=flat-square)
+
+---
+
+**如果这个项目对你有帮助，请考虑给个 ⭐ Star！**
