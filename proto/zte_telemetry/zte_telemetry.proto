@@ -1,0 +1,257 @@
+/*************************************************************************************
+ * Copyright (C) 2018-2020  ZTE Corporation.  All rights reserved.                   *
+ *************************************************************************************
+ * Description:                                                                      *
+ *    This proto defines a schema for telemetry                                      *
+ *                                                                                   *
+ *************************************************************************************
+ * Organization:                                                                     *
+ *   ZTE Corporation                                                                *
+ *************************************************************************************
+ * Contact:                                                                          *
+ *    ZTE Corporation                                                                *
+ *    Nanjing Institute of ZTE Corporation                                           *
+ "    No.68 Zijinghua Rd. Yuhuatai District, Nanjing, China                          *
+ *    Tel: +86-25-52870000                                                           *   
+ *************************************************************************************
+ * version:                                                                          *
+ *    1st edition 2020-01-20                                                         *
+ *    2nd edition 2021-07-16                                                         *
+ *    3rd edition 2021-10-30                                                         *
+ *************************************************************************************/
+
+syntax = "proto3";
+
+option go_package = "ztelem/proto;proto";
+
+package  zte.telemetry;
+
+
+//########################################################################################
+//     telemetry首部定义
+//########################################################################################
+
+message Telemetry{
+   string system_id            = 1;     //可以是hostname，用于标识设备。
+   string subscription_id      = 2;     //订阅名
+   string mng_ipv4             = 3;     //设备管理口的IPv4地址
+   string mng_ipv6             = 4;     //设备管理口的IPv6地址
+   
+   TelemetryDataType data_type = 5;    //default is PM 
+   string sensor_path = 6;             //可选,GPB压缩编码时填写,采样路径，例：oc-if:interfaces/interface/state/counters,
+                                       //自定义事件时,为:zte-telemetry:SelfDefinedEvent
+   string proto_path =  7;             //可选,GPB压缩编码时填写,标识采用数据对应的proto消息，形式：<package>.<message>，例：zte.telemetry.interface.InterfaceInfo,
+                                       //自定义事件时,为:zte.telemetry.SelfDefinedEvent
+   uint64 collection_id = 8;           //标识采样轮次。一次采样分多包消息时采样轮次相同。
+   uint64 collection_start_time = 9;   //标识采样轮次开始的UTC时间。单位:毫秒 since 1970:0:0:0。如果一次采样分多包消息时,只有第一包消息才填写时间。
+   uint64 msg_timestamp = 10;          //生成本消息的UTC时间戳。 单位:毫秒 since 1970:0:0:0
+   uint64 collection_end_time = 11;    //标识采样轮次结束UTC时间。 单位:毫秒 since 1970:0:0:0，如果一次采样分多包消息时,只有最后一包消息才填写结束时间。
+   uint32 current_period = 12;         //采样精度，单位:毫秒。填写为业务实际的采样周期
+
+   repeated NotificationGpbKv data_gpbkv = 13;     //GPB-KV编码数据。 
+   repeated NotificationGpb data_gpb = 14;         //GPB压缩编码的数据
+   string json_ietf_val = 15;    //JSON-encoded text per RFC7951.
+}
+
+
+//########################################################################################
+//     类型定义
+//########################################################################################
+
+enum TelemetryDataType
+{
+    PM = 0;
+    ALARM = 1;
+}
+
+
+//########################################################################################
+//     GPB格式定义
+//########################################################################################
+
+message NotificationGpb {
+    uint64 timestamp = 1;   //采样当前实例的UTC时间，单位:毫秒 since 1970:0:0:0
+    bytes  content = 2;     //承载的采样实例数据，需要结合sensor_path或proto_path字段，才可以判断此处会以哪个proto文件编码。
+                            //自定义事件是对应message SelfDefinedEvent
+}
+
+
+//########################################################################################
+//     GPB-KV格式定义
+//########################################################################################
+
+message NotificationGpbKv {
+  uint64 timestamp          = 1;    // 采样数据生成的UTC时间，since 1970:0:0:0
+  string instance_path     = 2;    // The instance path. For examples:oc-if:interfaces/interface[name=gei-1/2/1]/subinterfaces/subinterface[index=9]/state/counters
+  repeated KeyValue value  = 3;    // Data elements that have changed values.
+}
+
+message KeyValue
+{
+    string     keyname      = 1;
+    TypedValue element      = 2;
+}
+
+message TypedValue {
+  oneof value {
+    string string_val = 1;            // String value.
+    int64  int64_val = 2;             // Integer value.
+    uint64 uint64_val = 3;            // Unsigned integer value.
+    int32  int32_val = 4;             // Integer value.
+    uint32 uint32_val = 5;            // Unsigned integer value.
+    float  float_val = 6;              // float value.
+    double double_val = 7;            // double value.
+    bytes  bytes_val = 8;             // bytes value.
+  }
+}
+
+//########################################################################################
+//     JSON-encoded text per RFC7951
+//     注：JSON编码是一个字符串文本，业务采样部分符合相应业务的YANG模型，这里给出示例.
+//         实际的数据报文中不含换行、缩进等排版字符，以减少JSON编码的规模.
+//########################################################################################
+//Telemetry层JSON编码报文格式：
+//{
+    //"system_id": "ZXR10",
+    //"subscription_id": "aSub",
+    //"json_ietf_val":{
+    //  "data":[
+    //    {
+    //      "timestamp":"2021-02-07T06:28:16.000+08:00",  
+    //      "instance":"oc-if:interfaces/interface[name=fei-0/1/0/6]/state/counters",  -- YANG模型中业务实例的xpath路径
+    //      "content":{  -- YANG模型中该实例下的结点和值，符合YANG模型定义
+    //        "in-octet":6113457,
+    //        "out-octets":5009548,
+    //        "in-discards":0
+    //      }
+    //    },
+    //    {
+    //      "timestamp":"2021-02-07T06:28:16.000+08:00",
+    //      "instance":"oc-if:interfaces/interface[name=fei-0/1/0/7]/state/counters",
+    //      "content":{
+    //        "in-octet":34512,
+    //        "out-octets":43000,
+    //        "in-discards":0
+    //      }
+    //    }
+    //  ],
+    //  "self_defined_event":[{
+    //      "level":3,
+    //      "description":"This is a test for self-defined-event.",
+    //      "filter_relation":1,
+    //      "filter":[{  
+    //        "condition_relation":1,
+    //        "condition":[
+    //          {
+    //             ... 
+    //          }
+    //        ]
+    //      }],
+    //      "content_json":{
+    //        "timestamp":"2021-02-07T06:28:16.000+08:00",
+    //        "instance":"oc-if:interfaces/interface[name=fei-0/1/0/7]/state/counters",
+    //        "content":{
+    //          "in-octet":34512,
+    //          "out-octets":43000,
+    //          "in-discards":0
+    //        }
+    //      }
+    //    }
+    //   ]
+    //}
+//}
+
+//仅业务层数据JSON编码报文格式时，string json_ietf_val = 15 字段取值如下:
+//{
+//  "data":[
+//    {
+//      "timestamp":"2021-02-07T06:28:16.000+08:00", 
+//      "instance":"oc-if:interfaces/interface[name=fei-0/1/0/6]/state/counters",  -- YANG模型中业务实例的xpath路径
+//      "content":{  -- YANG模型中该实例下的结点和值，符合YANG模型定义
+//        "in-octet":6113457,
+//        "out-octets":5009548,
+//        "in-discards":0
+//      }
+//    },
+//    {
+//      "timestamp":"2021-02-07T06:28:16.000+08:00", 
+//      "instance":"oc-if:interfaces/interface[name=fei-0/1/0/7]/state/counters",
+//      "content":{
+//        "in-octet":34512,
+//        "out-octets":43000,
+//        "in-discards":0
+//      }
+//    }
+//  ]
+//}
+
+
+//仅业务层数据自定义事件JSON编码报文格式，string json_ietf_val = 15 字段取值如下：
+//{
+//  "self_defined_event":[
+//    {
+//      "level":3,
+//      "description":"This is a test for self-defined-event.",
+//      "filter_relation":1,
+//      "filter":[{  
+//        "condition_relation":1,
+//        "condition":[
+//          {
+//             ... 
+//          }
+//        ]
+//      }],
+//      "content_json":{
+//        "timestamp":"2021-02-07T06:28:16.000+08:00", 
+//        "instance":"oc-if:interfaces/interface[name=fei-0/1/0/7]/state/counters",
+//        "content":{
+//          "in-octet":34512,
+//          "out-octets":43000,
+//          "in-discards":0
+//        }
+//      }
+//    }
+//   ]
+//}
+
+//########################################################################################
+//     自定义事件格式定义
+//########################################################################################
+message SelfDefinedEvent {
+    string sensor_path = 1;    //GPB压缩编码时填写,触发自定义事件的采样路径，例：oc-if:interfaces/interface/state/counters
+    string proto_path = 2;    //GPB压缩编码时填写,标识触发自定义事件的采用数据对应的proto消息,形式：<package>.<message>，例：zte.telemetry.interface.InterfaceInfo
+    uint32 level = 3;    //自定义事件的级别。
+    string description = 4;    //自定义事件的描述信息。
+    Relation filter_relation = 5;    //触发自定义事件过滤条件之间的关系
+    repeated SelfDefinedFilter filter = 6;    //触发自定义事件的过滤条件
+    NotificationGpbKv content_gpbkv = 7;    //触发自定义事件的GPB-KV编码采样数据内容
+    bytes content_gpb = 8;     //触发自定义事件的GPB压缩编码的采样数据内容
+    string content_json = 9;    //JSON-encoded text per RFC7951.
+}
+
+message SelfDefinedFilter {
+    Relation condition_relation = 1;    //过滤条件之间的关系
+    repeated FilterCondition condition = 2;    //过滤条件
+}
+
+message FilterCondition {
+    string op_field = 1;    //触发条件的字段名称
+    ThresholdOpType op_type = 2;    //触发条件时字段值与阈值的关系
+    TypedValue threshold_op_value = 3;    //触发条件的字段阈值
+    TypedValue op_value = 4;    //触发条件时该字段的取值
+}
+
+enum Relation {
+    RELATION_INVALID = 0; //无效值
+    RELATION_AND = 1;     //与关系
+    RELATION_OR = 2;     //或关系
+}
+
+enum ThresholdOpType {
+    THRESHOLD_OPTYPE_INVALID = 0;
+    THRESHOLD_OPTYPE_EQ = 1;    //等于
+    THRESHOLD_OPTYPE_GE = 2;    //大于等于
+    THRESHOLD_OPTYPE_GT = 3;    //大于
+    THRESHOLD_OPTYPE_LE = 4;    //小于等于
+    THRESHOLD_OPTYPE_LT = 5;    //小于
+}

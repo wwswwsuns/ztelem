@@ -1,0 +1,59 @@
+# 二进制文件
+bin/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# 日志文件
+logs/
+*.log
+
+# 配置文件（包含敏感信息）
+*.yaml
+*.yml
+!example-config.yaml
+!docker-compose.yml
+
+# Go编译产物
+*.test
+*.prof
+coverage.out
+
+# 临时文件
+*.tmp
+*.temp
+.DS_Store
+Thumbs.db
+
+# IDE文件
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 备份文件
+*_backup/
+internal_backup/
+
+# 数据库文件
+*.db
+*.sqlite
+*.sqlite3
+
+# 环境变量文件
+.env
+.env.local
+.env.production
+
+# 文档生成文件
+*.pdf
+md/
+
+# 测试覆盖率
+coverage.html
+coverage.xml
+
+# 依赖管理
+vendor/

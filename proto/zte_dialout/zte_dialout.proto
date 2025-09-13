@@ -1,0 +1,41 @@
+/*************************************************************************************
+ * Copyright (C) 2018-2020  ZTE Corporation.  All rights reserved.                   *
+ *************************************************************************************
+ * Description:                                                                      *
+ *    This proto defines a schema for ZTE dialin                                     *
+ *                                                                                   *
+ *************************************************************************************
+ * Organization:                                                                     *
+ *   ZTE Corporation                                                                 *
+ *************************************************************************************
+ * Contact:                                                                          *
+ *    ZTE Corporation                                                                *
+ *    Nanjing Institute of ZTE Corporation                                           *
+ "    No.68 Zijinghua Rd. Yuhuatai District, Nanjing, China                          *
+ *    Tel: +86-25-52870000                                                           *   
+ *************************************************************************************
+ * version:                                                                          *
+ *    1st edition 2020-01-20                                                         *
+ *    2st edition 2021-10-30                                                         *
+ *************************************************************************************/
+syntax = "proto3";                          //proto版本定义为v3版本。
+
+option go_package = "ztelem/proto;proto";
+
+package zte.dialout;                       //本包名称为zte_dialout。
+
+service ztedialoutService {
+    //主动推送rpc方法定义，用于Telemetry推送采样数据。
+	rpc Publish(stream PublishArgs) returns (stream PublishArgs);
+} 
+
+message PublishArgs {
+    int64 ReqId = 1;               //请求序列号，从1开始
+    oneof MessageData {
+        bytes data = 2;               //承载GPB编码后的数据,data carries the payload content，对应zte_telemetry.proto。
+        string json_data = 4;          //承载JSON编码格式的采样数据
+    } 
+    string errors = 3;             //产生错误时的描述信息，GPB编码时编号为3。
+}
+
+

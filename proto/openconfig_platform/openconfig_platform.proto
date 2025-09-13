@@ -1,0 +1,395 @@
+/*************************************************************************************
+ * Copyright (C) 2018-2020  ZTE Corporation.  All rights reserved.                   *
+ *************************************************************************************
+ * Description:                                                                      *
+ *    This proto defines a schema for platform                                       *
+ *                                                                                   *
+ *************************************************************************************
+ * Organization:                                                                     *
+ *   ZTE Corporation                                                                 *
+ *************************************************************************************
+ * Contact:                                                                          *
+ *    ZTE Corporation                                                                *
+ *    Nanjing Institute of ZTE Corporation                                           *
+ "    No.68 Zijinghua Rd. Yuhuatai District, Nanjing, China                          *
+ *    Tel: +86-25-52870000                                                           *   
+ *************************************************************************************
+ * version:                                                                          *
+ *    1st edition 2020-08-20                                                         *
+ *************************************************************************************/
+syntax = "proto3";
+
+option go_package = "ztelem/proto;proto";
+
+package zte.telemetry.platform;
+
+//平台物理组件采样项
+/*************************************************************************************
+ * Description:                                                                      *
+ *    The following messages defines for component                                   *
+ *                                                                                   *
+ * Subscription info:                                                                *
+ *    sensor-path:                                                                   *
+ *************************************************************************************/
+message ComponentInfo {
+    /* Component Name, Key field */
+    string        name = 1;         //组件名称，不同组件的命令格式不同，例如：单板名称为PFU-0/1/0，端口名称为xgei-0/1/0/1等等。
+    
+    /* Common state informaion*/
+    CommonState   common_state = 2; //组件通用状态信息
+        
+    /* Temperature alarm data for platform components */
+    Temperature   temp_info = 3;    //组件温度及告警信息
+    
+    /* Associated memory of the component*/
+    MemoryInfo    mem_info = 4;     //内存相关信息
+    
+    /* Cpu utilization of the component */
+    CpuInfo       cpu_info = 5;     //组件的cpu利用率等信息
+    
+    /* Power administrate state of the linecard component */
+    LinecardInfo  power_admin_state = 6; //线卡组件的供电状态
+    
+    /* Fan information of the component */
+    FanInfo       fan_info = 7;     //风扇组件信息
+    
+    /* Power information of the component */
+    PowerInfo     power_info = 8;    //电源组件信息   
+    
+    /* storage information of the component*/
+    StorageInfo   storage_info = 9;    //存储器信息 
+    
+    /* optical information of the component*/
+    OpticalInfo   optical_info = 10;    //光模块信息 
+    
+    /* optical channel information of the component*/
+    repeated OptChanInfo   opticalchan_info = 11;    //光通道信息,子消息带key要用repeated
+
+}
+
+/*************************************************************************************
+ * Description:                                                                      *
+ *    The following messages defines for common state of the component               *
+ *                                                                                   *
+ * Subscription info:                                                                *
+ *    sensor-path: oc-platform:components/component[name]/state                      *
+ *************************************************************************************/
+message CommonState
+{
+    /* Current operational status of the component*/
+    string        oper_status = 1;  //组件操作状态，激活、非激活或未使能
+    
+    /* Uptime of the component */
+    uint32        uptime = 2;       //组件上电时间，单位：秒
+    
+    /* Actual power used by the component */
+    uint32        used_power = 3;   //组件已用功率，单位：瓦
+
+    /* Actual power by the component */
+    uint32        allocated_power = 4;   //组件可用功率，单位：瓦
+
+    string        current_voltage = 5;  //组件工作电压
+    string        current_current = 6;    //组件工作电流
+    string        total_capacity = 7;    //组件工作可用功率，字符形式
+    string        used_capacity = 8;    //组件工作已用功率，字符形式
+    string        type = 9;    //组件工作类型
+    string        redundancy_type = 10;    //组件备份类型   
+    string        modules = 11;    //组件模块数
+    string        total_input_power = 12;   //组件输入功率，单位：瓦
+}
+
+/*************************************************************************************
+ * Description:                                                                      *
+ *    The following messages defines for temperature                                 *
+ *                                                                                   *
+ * Subscription info:                                                                *
+ *    sensor-path: oc-platform:components/component[name]/state/temperature          *
+ *************************************************************************************/
+message Temperature{
+    /* The instantaneous value of temperature */
+    float instant= 1;                   //实时温度，单位：摄氏度
+    
+    /* The arithmetic mean value of temperature over the sampling period */
+    float avg    = 2;                   //interval时间内的平均温度，单位：摄氏度
+    
+    /* The minimum value of temperature over the sampling period */
+    float min    = 3;                   //interval时间内的最低温度，单位：摄氏度
+    
+    /* The maximum value of temperature over the sampling period*/
+    float max    = 4;                   //interval时间内的最高温度，单位：摄氏度
+    
+    /* The time interval over which the min/max/average statistics are computed by the system */
+    uint64 interval  = 5;               //统计时间间隔，单位：纳秒
+    
+    /* The absolute time at which the minimum value occurred.*/
+    uint64 min_time  = 6;               //最小值发生的时间，单位：纳秒，从1970.1.1 00:00:00开始计算的相对时间)
+    
+    /* The absolute time at which the maximum value occurred.*/
+    uint64 max_time  = 7;               //最大值发生的时间，单位：纳秒，从1970.1.1 00:00:00开始计算的相对时间)
+    
+    /* The alarm raised or asserted */
+    bool  alarm_status = 8;             //告警状态，是否有告警
+
+    /* The threhold of the alarm */ 
+    uint32   alarm_threshold = 9;       //告警门限，单位：摄氏度
+    
+    /* The severity of the current alarm */
+    string   alarm_severity = 10;  //告警级别
+
+    /* The severity of the current alarm */
+    uint32   minor_threshold = 11;  //minor阈值
+
+    /* The severity of the current alarm */
+    uint32   major_threshold = 12;  //major阈值
+
+    /* The severity of the current alarm */
+    uint32   fatal_threshold = 13;  //fatal阈值
+
+    string instant_string = 14;  //实时温度,带符号，单位：摄氏度
+
+    string status = 15;          //测温点温度状态
+    string description = 16;          //测温点描述
+} 
+
+enum AlarmStatus {
+    INVALID = 0;
+    NORMAL = 1;
+    ALARM = 2;
+}
+
+/*************************************************************************************
+ * Description:                                                                      *
+ *    The following messages defines for memory                                      *
+ *                                                                                   *
+ * Subscription info:                                                                *
+ *    sensor-path: oc-platform:components/component[name]                            *
+ *************************************************************************************/
+message MemoryInfo {
+    /* The available memory physically installed, or logically allocated to the component.*/
+    uint64 available = 1;  //组件分配的可用内存，单位：bytes
+    
+    /* The currently used memory of the component */
+    uint64 utilized  = 2;  //组件已使用的内存，单位：bytes
+    
+        /* The currently used memory of the component */
+    uint64 free  = 3;     //组件剩余的内存，单位：bytes
+
+        /* The currently used usage of the component */
+    float usage  = 4;     //内存的使用率，单位：百分比
+
+        /* The currently used usage alarm status   */
+    AlarmStatus alarm_status  = 5;     //内存告警状态，是否有告警
+}
+
+/*************************************************************************************
+ * Description:                                                                      *
+ *    The following messages defines for cpu usage                                   *
+ *                                                                                   *
+ * Subscription info:                                                                *
+ *    sensor-path: oc-platform:components/component[name]                            *
+ *************************************************************************************/
+message CpuInfo {
+    /* The instantaneous value of the cpu usage */
+    uint32 instant= 1;     //cpu实时利用率，单位：百分比
+    
+    /* The arithmetic mean value of the cpu usage over the sampling period */
+    uint32 avg    = 2;     //interval时间内的平均cpu利用率，单位：百分比
+    
+    /* The minimum value of the cpu usage over the sampling period */
+    uint32 min    = 3;     //interval时间内的最低cpu利用率，单位：百分比
+    
+    /* The maximum value of the cpu usage over the sampling period */
+    uint32 max    = 4;     //interval时间内的最高cpu利用率，单位：百分比
+    
+    /* The time interval over which the min/max/average statistics are computed by the system */
+    uint64 interval  = 5;  //统计时间间隔，单位：纳秒
+    
+    /* The absolute time at which the minimum value occurred.*/
+    uint64 min_time  = 6;  //最小值发生的时间，单位：纳秒，从1970.1.1 00:00:00开始计算的相对时间)
+    
+    /* The absolute time at which the maximum value occurred.*/
+    uint64 max_time  = 7;  //最大值发生的时间，单位：纳秒，从1970.1.1 00:00:00开始计算的相对时间)
+
+    /* The currently used CPU alarm status   */
+    AlarmStatus alarm_status  = 8;     //CPU告警状态，是否有告警
+}
+
+/*************************************************************************************
+ * Description:                                                                      *
+ *    The following messages defines for linecard information                        *
+ *                                                                                   *
+ * Subscription info:                                                                *
+ *    sensor-path: oc-platform:components/component[name]/oc-linecard:linecard/state *
+ *************************************************************************************/
+message LinecardInfo {
+    /* Enable or disable power to the linecard */
+    string    power_admin_state = 1;  //线卡供电状态
+}
+
+/*************************************************************************************
+ * Description:                                                                      *
+ *    The following messages defines for fan information                             *
+ *                                                                                   *
+ * Subscription info:                                                                *
+ *    sensor-path: oc-platform:components/component[name]/oc-fan:fan/state           *
+ *************************************************************************************/
+message FanInfo {
+    /* Current fan speed */
+    uint32 speed = 1;     //风扇速率，单位：rpm
+
+    /* Work state of the fan */
+    string state = 2;      //风扇工作状态
+
+    string phy_status = 3;   //风扇组在位状态
+
+    string work_mode = 4;  //风扇组工作模式
+
+    string current_power = 5;    //风扇组工作功率
+
+    string current_voltage = 6;    //风扇组工作电压
+
+    string current_current = 7;   //风扇组工作电流
+    string speed_percent = 8;     //风扇速率比
+}
+
+/*************************************************************************************
+ * Description:                                                                      *
+ *    The following messages defines for power information                           *
+ *                                                                                   *
+ * Subscription info:                                                                *
+ *    sensor-path: oc-platform:components/component[name]/oc-psu:power-supply/state  *
+ *************************************************************************************/
+message PowerInfo {
+    /* Adminsitrative control on the on/off state */
+    bool    enable = 1;            //采样电源模块上下电状态
+    
+    /* Maximum power capacity of the power supply */
+    float   capacity  = 2;         //采样电源模块额定功率，单位：瓦
+    
+    /* The input current draw of the power supply */
+    float   input_current = 3;     //采样电源模块输入电流，单位：安培
+    
+    /* Input voltage to the power supply */
+    float   input_voltage = 4;     //采集电源模块输入电压，单位：伏特
+    
+    /* The output current supplied by the power supply */
+    float   output_current = 5;    //采样电源模块输出电流，单位：安培
+    
+    /* Output voltage to the power supply */
+    float   output_voltage = 6;    //采集电源模块输出电压，单位：伏特
+    
+    /* Output power supplied by the power supply */
+    float   output_power = 7;      //采样电源模块输出功率，单位：瓦
+
+    /* Work state of the power supply */
+    string work_state = 8;      //采样电源工作状态，对应run status
+
+    string power_name = 9;      //采样电源名称
+
+    string phy_state = 10;      //采样电源物理在线状态
+
+    string power_state = 11;      //采样电源开关机状态
+
+    string com_state = 12;      //采样电源通讯状态
+
+    string temperature = 13;      //采样电源温度
+
+    string available  = 14;         //采样电源模块剩余功率，单位：瓦
+
+    string capacity_string  = 15;         //采样电源模块额定功率，字符形式，单位：瓦
+
+    string input_power = 16;    //采样电源模块输入功率，单位：瓦
+    float   input2_current = 17;    //采样电源模块输出电流，单位：安培
+    float   input2_voltage = 18;     //采集电源模块输入电压，单位：伏特
+    float   output2_current = 19;    //采样电源模块输出电流，单位：安培
+    float   output2_voltage = 20;    //采集电源模块输出电压，单位：伏特
+}
+
+/*************************************************************************************
+ * Description:                                                                      *
+ *    The following messages defines for storage information                         *
+ *                                                                                   *
+ * Subscription info:                                                                *
+ *    sensor-path: oc-platform:components/component[name]/state/storage              *
+ *************************************************************************************/
+message StorageInfo {
+    /* availability of the storage*/
+    uint32    availability = 1;            //当前单板的存储器利用率
+}
+
+/*************************************************************************************
+ * Description:                                                                      *
+ *    The following messages defines for Optical channel information                  *
+ *                                                                                   *
+ * Subscription info:                                                                *
+ *    sensor-path: oc-platform:components/component[name]/oc-transceiver:transceiver/physical-channels/channel/state        *
+ *************************************************************************************/
+message OptChanInfo {
+    uint32        index = 1;                //光通道channel号,没有unit16的数据类型
+    OpticalInfo   optchan_info = 2;         //光通道信息
+}
+
+/*************************************************************************************
+ * Description:                                                                      *
+ *    The following messages defines for Optical information                  *
+ *                                                                                   *
+ * Subscription info:                                                                *
+ *    sensor-path: oc-platform:components/component[name]/oc-transceiver:transceiver/state        *
+ *************************************************************************************/
+message OpticalInfo {
+    /* availability of the storage*/
+    OpticalPower    in_power = 1;            //接受光功率
+    OpticalPower    out_power = 2;           //发送光功率
+    BiasCurrent     bias_current = 3;        //偏置电流
+    OpticalTemp     temperature = 4;         //温度
+    Voltage         voltage = 5;             //电压
+    OpticalAlarm     alarm = 6;              //告警状态
+    OnlineStatus      online_status  = 7;      //在位状态
+    OpticalPowerThres rx_threshold = 8;        //接收光功率门限
+    OpticalPowerThres tx_threshold = 9;       //发送光功率门限
+}
+
+message OpticalPower {
+    /* instant value of power of the Optical*/
+    float    instant = 1;                    //光模块的实时功率，单位：dbm
+}
+
+message BiasCurrent {
+    /*instant value of laser-bias-current of the Optical*/
+    float    instant = 1;                    //偏置电流的实时值，单位：毫安（mA）
+}
+
+message OpticalTemp {
+    /*instant value of temperature of the Optical*/
+    float    instant = 1;                //温度，单位：摄氏度(degC)
+}
+message Voltage {
+    /*instant value of Voltage of the Optical*/
+    float           Vol33 = 1;               //3.3V电压，单位：伏特(V)
+    float           Vol5 = 2;                //5V电压，单位：伏特(V)
+}
+
+message OnlineStatus {
+    /*online status of the Optical*/
+    string online_status = 1;
+}
+
+message OpticalPowerThres {
+    /*instant value of power threhold of the Optical*/
+    float           high_alarm = 1;               //高告警门限
+    float           pre_high_alarm = 2;            //高预告警门限
+    float           low_alarm = 3;                //低告警门限
+    float           pre_low_alarm = 4;             //低预告警门限
+}
+
+message OpticalAlarm {
+    AlarmStatus los_status = 1;   //告警状态
+    LosAlarmInfo los_info = 2;
+}
+
+message LosAlarmInfo{
+    uint32  event_id = 2;                          //事件ID 
+    uint32  event_interval = 3;                    //上报采集间隔 10ms
+    repeated OpticalPower opt_in_power= 4;         //接受光功率  600byte  300*10ms
+    repeated OpticalPower opt_out_power = 5;       //发送光功率
+}
