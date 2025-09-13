@@ -5,11 +5,11 @@ import (
 	"net"
 	"time"
 
-	"telemetry-collector/internal/buffer"
-	"telemetry-collector/internal/config"
-	"telemetry-collector/internal/database"
-	"telemetry-collector/internal/parser"
-	"telemetry-collector/proto/zte_dialout"
+	"github.com/wwswwsuns/ztelem/internal/buffer"
+	"github.com/wwswwsuns/ztelem/internal/config"
+	"github.com/wwswwsuns/ztelem/internal/database"
+	"github.com/wwswwsuns/ztelem/internal/parser"
+	"github.com/wwswwsuns/ztelem/proto/zte_dialout"
 
 	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc"

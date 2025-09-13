@@ -5,10 +5,10 @@ import (
 	"strings"
 	"time"
 
-	"telemetry-collector/internal/models"
-	interfaceProto "telemetry-collector/proto/zxr10_interfaces"
-	platformProto "telemetry-collector/proto/openconfig_platform"
-	zteTelemetry "telemetry-collector/proto/zte_telemetry"
+	"github.com/wwswwsuns/ztelem/internal/models"
+	interfaceProto "github.com/wwswwsuns/ztelem/proto/zxr10_interfaces"
+	platformProto "github.com/wwswwsuns/ztelem/proto/openconfig_platform"
+	zteTelemetry "github.com/wwswwsuns/ztelem/proto/zte_telemetry"
 
 	"github.com/sirupsen/logrus"
 	"google.golang.org/protobuf/proto"

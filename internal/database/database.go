@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"telemetry-collector/internal/config"
-	"telemetry-collector/internal/models"
+	"github.com/wwswwsuns/ztelem/internal/config"
+	"github.com/wwswwsuns/ztelem/internal/models"
 	_ "github.com/lib/pq"
 )
 

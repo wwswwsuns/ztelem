@@ -1,6 +1,6 @@
 package database
 
-import "telemetry-collector/internal/models"
+import "github.com/wwswwsuns/ztelem/internal/models"
 
 // getFieldValue 获取平台指标字段值
 func getFieldValue(metric *models.PlatformMetric, fieldIndex int) interface{} {

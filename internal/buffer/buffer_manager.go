@@ -6,9 +6,9 @@ import (
 	"sync"
 	"time"
 
-	"telemetry-collector/internal/config"
-	"telemetry-collector/internal/database"
-	"telemetry-collector/internal/models"
+	"github.com/wwswwsuns/ztelem/internal/config"
+	"github.com/wwswwsuns/ztelem/internal/database"
+	"github.com/wwswwsuns/ztelem/internal/models"
 
 	"github.com/sirupsen/logrus"
 )

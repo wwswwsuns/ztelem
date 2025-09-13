@@ -11,10 +11,10 @@ import (
 	"syscall"
 	"time"
 
-	"telemetry-collector/internal/buffer"
-	"telemetry-collector/internal/collector"
-	"telemetry-collector/internal/config"
-	"telemetry-collector/internal/database"
+	"github.com/wwswwsuns/ztelem/internal/buffer"
+	"github.com/wwswwsuns/ztelem/internal/collector"
+	"github.com/wwswwsuns/ztelem/internal/config"
+	"github.com/wwswwsuns/ztelem/internal/database"
 
 	"github.com/sirupsen/logrus"
 )

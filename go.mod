@@ -1,4 +1,4 @@
-module telemetry-collector
+module github.com/wwswwsuns/ztelem
 
 go 1.24.0
 
