@@ -324,8 +324,8 @@ type InterfaceMetric struct {
 	LastClear            *time.Time `json:"last_clear,omitempty"`
 	InPkts               *uint64    `json:"in_pkts,omitempty"`
 	OutPkts              *uint64    `json:"out_pkts,omitempty"`
-	InputUtilization     *float64 `json:"input_utilization,omitempty"`     // %
-	OutputUtilization    *float64 `json:"output_utilization,omitempty"`    // %
+	InputUtilization     *string `json:"input_utilization,omitempty"`     // %
+	OutputUtilization    *string `json:"output_utilization,omitempty"`    // %
 	InTrafficRate        *string `json:"in_traffic_rate,omitempty"`       // Mbps
 	InPacketRate         *string `json:"in_packet_rate,omitempty"`        // Kfps
 	OutTrafficRate       *string `json:"out_traffic_rate,omitempty"`      // Mbps
@@ -346,10 +346,10 @@ type InterfaceMetric struct {
 	InV6PacketRate       *string `json:"in_v6_packet_rate,omitempty"`     // Kfps
 	OutV6TrafficRate     *string `json:"out_v6_traffic_rate,omitempty"`   // Mbps
 	OutV6PacketRate      *string `json:"out_v6_packet_rate,omitempty"`    // Kfps
-	InputV4Utilization   *float64 `json:"input_v4_utilization,omitempty"`  // %
-	OutputV4Utilization  *float64 `json:"output_v4_utilization,omitempty"` // %
-	InputV6Utilization   *float64 `json:"input_v6_utilization,omitempty"`  // %
-	OutputV6Utilization  *float64 `json:"output_v6_utilization,omitempty"` // %
+	InputV4Utilization   *string `json:"input_v4_utilization,omitempty"`  // %
+	OutputV4Utilization  *string `json:"output_v4_utilization,omitempty"` // %
+	InputV6Utilization   *string `json:"input_v6_utilization,omitempty"`  // %
+	OutputV6Utilization  *string `json:"output_v6_utilization,omitempty"` // %
 	InBierOctets         *uint64 `json:"in_bier_octets,omitempty"`
 	InBierPkts           *uint64 `json:"in_bier_pkts,omitempty"`
 	OutBierOctets        *uint64 `json:"out_bier_octets,omitempty"`
@@ -399,8 +399,8 @@ type SubinterfaceMetric struct {
 	LastClear             *time.Time `json:"last_clear,omitempty" db:"last_clear"`
 	InPkts                *uint64    `json:"in_pkts,omitempty" db:"in_pkts"`
 	OutPkts               *uint64    `json:"out_pkts,omitempty" db:"out_pkts"`
-	InputUtilization      *float64    `json:"input_utilization,omitempty" db:"input_utilization"`      // %
-	OutputUtilization     *float64    `json:"output_utilization,omitempty" db:"output_utilization"`    // %
+	InputUtilization      *string    `json:"input_utilization,omitempty" db:"input_utilization"`      // %
+	OutputUtilization     *string    `json:"output_utilization,omitempty" db:"output_utilization"`    // %
 	InTrafficRate         *string    `json:"in_traffic_rate,omitempty" db:"in_traffic_rate"`          // Mbps
 	InPacketRate          *string    `json:"in_packet_rate,omitempty" db:"in_packet_rate"`            // Kfps
 	OutTrafficRate        *string    `json:"out_traffic_rate,omitempty" db:"out_traffic_rate"`        // Mbps
@@ -421,10 +421,10 @@ type SubinterfaceMetric struct {
 	InV6PacketRate        *string    `json:"in_v6_packet_rate,omitempty" db:"in_v6_packet_rate"`      // Kfps
 	OutV6TrafficRate      *string    `json:"out_v6_traffic_rate,omitempty" db:"out_v6_traffic_rate"`  // Mbps
 	OutV6PacketRate       *string    `json:"out_v6_packet_rate,omitempty" db:"out_v6_packet_rate"`    // Kfps
-	InputV4Utilization    *float64    `json:"input_v4_utilization,omitempty" db:"input_v4_utilization"`  // %
-	OutputV4Utilization   *float64    `json:"output_v4_utilization,omitempty" db:"output_v4_utilization"` // %
-	InputV6Utilization    *float64    `json:"input_v6_utilization,omitempty" db:"input_v6_utilization"`  // %
-	OutputV6Utilization   *float64    `json:"output_v6_utilization,omitempty" db:"output_v6_utilization"` // %
+	InputV4Utilization    *string    `json:"input_v4_utilization,omitempty" db:"input_v4_utilization"`  // %
+	OutputV4Utilization   *string    `json:"output_v4_utilization,omitempty" db:"output_v4_utilization"` // %
+	InputV6Utilization    *string    `json:"input_v6_utilization,omitempty" db:"input_v6_utilization"`  // %
+	OutputV6Utilization   *string    `json:"output_v6_utilization,omitempty" db:"output_v6_utilization"` // %
 	InBierOctets          *uint64    `json:"in_bier_octets,omitempty" db:"in_bier_octets"`
 	InBierPkts            *uint64    `json:"in_bier_pkts,omitempty" db:"in_bier_pkts"`
 	OutBierOctets         *uint64    `json:"out_bier_octets,omitempty" db:"out_bier_octets"`
@@ -460,9 +460,9 @@ func FormatPercentage(value float64) string {
 	return fmt.Sprintf("%.2f%%", value)
 }
 
-// 辅助函数：格式化利用率（从1/10000单位转换为百分比）
+// 辅助函数：格式化利用率（从浮点数转换为百分比）
 func FormatUtilization(value float64) string {
-	percentage := value / 10000 * 100
+	percentage := value * 100
 	return fmt.Sprintf("%.2f%%", percentage)
 }
 

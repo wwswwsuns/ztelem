@@ -29,9 +29,9 @@ func percentageFormat(value float64) string {
 	return fmt.Sprintf("%.2f%%", value)
 }
 
-// utilizationToPercentage 将利用率(1/10000单位)转换为百分比
+// utilizationToPercentage 将利用率(浮点数)转换为百分比
 func utilizationToPercentage(utilization float32) string {
-	percentage := float64(utilization) / 100.0
+	percentage := float64(utilization) * 100.0
 	return fmt.Sprintf("%.2f%%", percentage)
 }
 
@@ -216,11 +216,6 @@ func uint64Ptr(v uint64) *uint64 {
 }
 
 func float64Ptr(v float64) *float64 {
-	return &v
-}
-
-// float64PtrNonZero 创建float64指针，0值返回nil
-func float64PtrNonZero(v float64) *float64 {
 	if v == 0.0 {
 		return nil
 	}
@@ -243,10 +238,9 @@ func formatPercentage(value float32) string {
 	return utilizationToPercentage(value)
 }
 
-// utilizationToNumeric 将利用率(1/10000单位)转换为数字百分比(不带%符号)
-// 根据proto定义，单位是1/10000，所以需要除以10000得到小数形式，再乘以100得到百分比
+// utilizationToNumeric 将利用率(浮点数)转换为数字百分比(不带%符号)
 func utilizationToNumeric(utilization float32) float64 {
-	return float64(utilization) / 10000.0 * 100.0
+	return float64(utilization) * 100.0
 }
 
 // percentageToNumeric 将uint32百分比转换为数字百分比(不带%符号)
