@@ -7,222 +7,426 @@ import (
 	"time"
 
 	"github.com/wwswwsuns/ztelem/internal/config"
-	"github.com/wwswwsuns/ztelem/internal/database"
 	"github.com/wwswwsuns/ztelem/internal/models"
-
 	"github.com/sirupsen/logrus"
 )
 
-// ExtendedBufferManager 扩展的缓冲区管理器
-type ExtendedBufferManager struct {
-	config    config.BufferConfig
+// FixedBufferManager 修复数据丢失问题的缓冲区管理器
+type FixedBufferManager struct {
+	// 数据库接口
+	db DatabaseInterface
+
+	// 配置
+	config       config.BufferConfig
 	writerConfig config.DatabaseWriterConfig
-	logger    *logrus.Logger
-	db        *database.ExtendedDB
-	
-	// 分类缓冲区 - 使用map进行聚合
+	logger       *logrus.Logger
+
+	// 分类缓冲区 - 使用精确的聚合键
 	platformBuffer      map[string]*models.PlatformMetric
 	interfaceBuffer     map[string]*models.InterfaceMetric
 	subinterfaceBuffer  map[string]*models.SubinterfaceMetric
-	
+
 	// 互斥锁
-	platformMutex       sync.RWMutex
-	interfaceMutex      sync.RWMutex
-	subinterfaceMutex   sync.RWMutex
-	
-	// 写入器通道
-	platformWriteChan      chan []models.PlatformMetric
-	interfaceWriteChan     chan []models.InterfaceMetric
-	subinterfaceWriteChan  chan []models.SubinterfaceMetric
-	
+	platformMutex      sync.RWMutex
+	interfaceMutex     sync.RWMutex
+	subinterfaceMutex  sync.RWMutex
+
+	// 统计信息
+	stats      FixedBufferStats
+	statsMutex sync.RWMutex
+
 	// 定时器和控制
 	flushTimer *time.Timer
 	stopChan   chan struct{}
-	wg         sync.WaitGroup
-	
-	// 统计信息
-	stats ExtendedBufferStats
-	statsMutex sync.RWMutex
+
+	// 写入通道 - 用于并行写入
+	platformWriteChan      chan []models.PlatformMetric
+	interfaceWriteChan     chan []models.InterfaceMetric
+	subinterfaceWriteChan  chan []models.SubinterfaceMetric
 }
 
-// ExtendedBufferStats 缓冲区统计信息
-type ExtendedBufferStats struct {
-	PlatformBufferSize     int
-	InterfaceBufferSize    int
-	SubinterfaceBufferSize int
-	TotalProcessed         int64
-	TotalErrors           int64
-	LastFlushTime         time.Time
-	FlushDuration         time.Duration
+// 在buffer_manager.go中，将数据库接口改为支持pgx
+// 或者创建一个适配器接口
+type DatabaseWriter interface {
+    BatchInsertPlatformMetrics([]models.PlatformMetric) error
+    BatchInsertInterfaceMetrics([]models.InterfaceMetric) error
+    BatchInsertSubinterfaceMetrics([]models.SubinterfaceMetric) error
+}
+// FixedBufferStats 修复版缓冲区统计信息
+type FixedBufferStats struct {
+	PlatformBufferSize      int
+	InterfaceBufferSize     int
+	SubinterfaceBufferSize  int
+	TotalRecordsProcessed   int64
+	TotalRecordsWritten     int64
+	TotalErrors             int64
+	LastFlushTime           time.Time
+	FlushDuration           time.Duration
+	KeyCollisions           int64  // 聚合键冲突计数
 }
 
-// NewExtendedBufferManager 创建扩展的缓冲区管理器
-func NewExtendedBufferManager(config config.BufferConfig, writerConfig config.DatabaseWriterConfig, logger *logrus.Logger, db *database.ExtendedDB) *ExtendedBufferManager {
-	bm := &ExtendedBufferManager{
-		config:             config,
-		writerConfig:       writerConfig,
-		logger:             logger,
-		db:                 db,
-		platformBuffer:     make(map[string]*models.PlatformMetric),
-		interfaceBuffer:    make(map[string]*models.InterfaceMetric),
-		subinterfaceBuffer: make(map[string]*models.SubinterfaceMetric),
-		stopChan:           make(chan struct{}),
-		
-		// 创建写入通道
-		platformWriteChan:     make(chan []models.PlatformMetric, writerConfig.ParallelWriters),
-		interfaceWriteChan:    make(chan []models.InterfaceMetric, writerConfig.ParallelWriters),
-		subinterfaceWriteChan: make(chan []models.SubinterfaceMetric, writerConfig.ParallelWriters),
+// DatabaseInterface 数据库接口
+type DatabaseInterface interface {
+	BatchInsertPlatformMetrics(data []models.PlatformMetric) error
+	BatchInsertInterfaceMetrics(data []models.InterfaceMetric) error
+	BatchInsertSubinterfaceMetrics(data []models.SubinterfaceMetric) error
+}
+
+// NewFixedBufferManager 创建修复版缓冲区管理器
+func NewFixedBufferManager(db DatabaseInterface, config config.BufferConfig, writerConfig config.DatabaseWriterConfig, logger *logrus.Logger) *FixedBufferManager {
+	bm := &FixedBufferManager{
+		db:                     db,
+		config:                 config,
+		writerConfig:           writerConfig,
+		logger:                 logger,
+		platformBuffer:         make(map[string]*models.PlatformMetric),
+		interfaceBuffer:        make(map[string]*models.InterfaceMetric),
+		subinterfaceBuffer:     make(map[string]*models.SubinterfaceMetric),
+		stopChan:               make(chan struct{}),
+		platformWriteChan:      make(chan []models.PlatformMetric, 100),
+		interfaceWriteChan:     make(chan []models.InterfaceMetric, 100),
+		subinterfaceWriteChan:  make(chan []models.SubinterfaceMetric, 100),
 	}
-	
-	// 启动并行写入器
-	bm.startParallelWriters()
-	
+
 	// 启动定时刷新
 	bm.startFlushTimer()
-	
+
+	// 启动并行写入器
+	bm.startParallelWriters()
+
 	return bm
 }
 
-// AddPlatformMetrics 添加平台指标到缓冲区 - 优化版本
-func (bm *ExtendedBufferManager) AddPlatformMetrics(metrics []models.PlatformMetric) error {
+// AddPlatformMetrics 添加平台指标数据 - 修复版本
+func (bm *FixedBufferManager) AddPlatformMetrics(metrics []models.PlatformMetric) error {
 	bm.platformMutex.Lock()
 	defer bm.platformMutex.Unlock()
-	
-	// 聚合数据：按 timestamp+system_id+component_name 进行聚合
+
+	// 使用精确聚合键进行聚合
 	for _, metric := range metrics {
-		key := bm.generatePlatformKey(&metric)
+		// 生成精确的聚合键
+		key := bm.generatePrecisePlatformKey(&metric)
 		
 		if existing, exists := bm.platformBuffer[key]; exists {
-			// 合并数据：将新数据的非空字段更新到现有记录
+			// 合并数据，保持数据完整性
 			bm.mergePlatformMetric(existing, &metric)
-			bm.logger.Debugf("聚合平台指标数据: %s", key)
-		} else {
-			// 检查缓冲区大小限制
-			if len(bm.platformBuffer) >= bm.config.PlatformBufferSize {
-				bm.logger.Warnf("平台指标缓冲区已满 (%d)，强制刷新", len(bm.platformBuffer))
-				if err := bm.flushPlatformMetrics(); err != nil {
-					return fmt.Errorf("强制刷新平台指标缓冲区失败: %v", err)
-				}
-			}
+			bm.logger.Debugf("合并平台指标数据: %s", key)
 			
+			bm.statsMutex.Lock()
+			bm.stats.KeyCollisions++
+			bm.statsMutex.Unlock()
+		} else {
 			// 创建新记录的副本
-			newMetric := metric
-			bm.platformBuffer[key] = &newMetric
-			bm.logger.Debugf("添加新平台指标数据: %s", key)
+			metricCopy := metric
+			bm.platformBuffer[key] = &metricCopy
 		}
 	}
-	
-	// 检查是否需要立即刷新
+
+	bm.statsMutex.Lock()
+	bm.stats.TotalRecordsProcessed += int64(len(metrics))
+	bm.statsMutex.Unlock()
+
+	// 检查是否需要刷新
 	if len(bm.platformBuffer) >= bm.config.FlushThreshold {
-		bm.logger.Debugf("平台指标缓冲区达到阈值 %d，立即刷新", len(bm.platformBuffer))
-		return bm.flushPlatformMetrics()
+		go bm.FlushPlatformMetrics()
 	}
-	
-	bm.logger.Debugf("处理 %d 条平台指标，当前缓冲区大小: %d", len(metrics), len(bm.platformBuffer))
+
 	return nil
 }
 
-// AddInterfaceMetrics 添加接口指标到缓冲区 - 优化版本
-func (bm *ExtendedBufferManager) AddInterfaceMetrics(metrics []models.InterfaceMetric) error {
+// AddInterfaceMetrics 添加接口指标数据 - 修复版本
+func (bm *FixedBufferManager) AddInterfaceMetrics(metrics []models.InterfaceMetric) error {
 	bm.interfaceMutex.Lock()
 	defer bm.interfaceMutex.Unlock()
-	
-	// 聚合数据：按 timestamp+system_id+interface_name 进行聚合
+
+	// 使用精确聚合键进行聚合
 	for _, metric := range metrics {
-		key := bm.generateInterfaceKey(&metric)
+		// 生成精确的聚合键
+		key := bm.generatePreciseInterfaceKey(&metric)
 		
 		if existing, exists := bm.interfaceBuffer[key]; exists {
-			// 合并数据：将新数据的非空字段更新到现有记录
+			// 合并数据，保持数据完整性
 			bm.mergeInterfaceMetric(existing, &metric)
-			bm.logger.Debugf("聚合接口指标数据: %s", key)
-		} else {
-			// 检查缓冲区大小限制
-			if len(bm.interfaceBuffer) >= bm.config.InterfaceBufferSize {
-				bm.logger.Warnf("接口指标缓冲区已满 (%d)，强制刷新", len(bm.interfaceBuffer))
-				if err := bm.flushInterfaceMetrics(); err != nil {
-					return fmt.Errorf("强制刷新接口指标缓冲区失败: %v", err)
-				}
-			}
+			bm.logger.Debugf("合并接口指标数据: %s", key)
 			
+			bm.statsMutex.Lock()
+			bm.stats.KeyCollisions++
+			bm.statsMutex.Unlock()
+		} else {
 			// 创建新记录的副本
-			newMetric := metric
-			bm.interfaceBuffer[key] = &newMetric
-			bm.logger.Debugf("添加新接口指标数据: %s", key)
+			metricCopy := metric
+			bm.interfaceBuffer[key] = &metricCopy
 		}
 	}
-	
-	// 检查是否需要立即刷新
+
+	bm.statsMutex.Lock()
+	bm.stats.TotalRecordsProcessed += int64(len(metrics))
+	bm.statsMutex.Unlock()
+
+	// 检查是否需要刷新
 	if len(bm.interfaceBuffer) >= bm.config.FlushThreshold {
-		bm.logger.Debugf("接口指标缓冲区达到阈值 %d，立即刷新", len(bm.interfaceBuffer))
-		return bm.flushInterfaceMetrics()
+		go bm.FlushInterfaceMetrics()
 	}
-	
-	bm.logger.Debugf("处理 %d 条接口指标，当前缓冲区大小: %d", len(metrics), len(bm.interfaceBuffer))
+
 	return nil
 }
 
-// AddSubinterfaceMetrics 添加子接口指标到缓冲区 - 优化版本
-func (bm *ExtendedBufferManager) AddSubinterfaceMetrics(metrics []models.SubinterfaceMetric) error {
+// AddSubinterfaceMetrics 添加子接口指标数据 - 修复版本
+func (bm *FixedBufferManager) AddSubinterfaceMetrics(metrics []models.SubinterfaceMetric) error {
 	bm.subinterfaceMutex.Lock()
 	defer bm.subinterfaceMutex.Unlock()
-	
-	// 聚合数据：按 timestamp+system_id+interface_name+subinterface_index 进行聚合
+
+	// 使用精确聚合键进行聚合
 	for _, metric := range metrics {
-		key := bm.generateSubinterfaceKey(&metric)
+		// 生成精确的聚合键
+		key := bm.generatePreciseSubinterfaceKey(&metric)
 		
 		if existing, exists := bm.subinterfaceBuffer[key]; exists {
-			// 合并数据：将新数据的非空字段更新到现有记录
+			// 合并数据，保持数据完整性
 			bm.mergeSubinterfaceMetric(existing, &metric)
-			bm.logger.Debugf("聚合子接口指标数据: %s", key)
-		} else {
-			// 检查缓冲区大小限制
-			if len(bm.subinterfaceBuffer) >= bm.config.SubinterfaceBufferSize {
-				bm.logger.Warnf("子接口指标缓冲区已满 (%d)，强制刷新", len(bm.subinterfaceBuffer))
-				if err := bm.flushSubinterfaceMetrics(); err != nil {
-					return fmt.Errorf("强制刷新子接口指标缓冲区失败: %v", err)
-				}
-			}
+			bm.logger.Debugf("合并子接口指标数据: %s", key)
 			
+			bm.statsMutex.Lock()
+			bm.stats.KeyCollisions++
+			bm.statsMutex.Unlock()
+		} else {
 			// 创建新记录的副本
-			newMetric := metric
-			bm.subinterfaceBuffer[key] = &newMetric
-			bm.logger.Debugf("添加新子接口指标数据: %s", key)
+			metricCopy := metric
+			bm.subinterfaceBuffer[key] = &metricCopy
 		}
 	}
-	
-	// 检查是否需要立即刷新
+
+	bm.statsMutex.Lock()
+	bm.stats.TotalRecordsProcessed += int64(len(metrics))
+	bm.statsMutex.Unlock()
+
+	// 检查是否需要刷新
 	if len(bm.subinterfaceBuffer) >= bm.config.FlushThreshold {
-		bm.logger.Debugf("子接口指标缓冲区达到阈值 %d，立即刷新", len(bm.subinterfaceBuffer))
-		return bm.flushSubinterfaceMetrics()
+		go bm.FlushSubinterfaceMetrics()
 	}
-	
-	bm.logger.Debugf("处理 %d 条子接口指标，当前缓冲区大小: %d", len(metrics), len(bm.subinterfaceBuffer))
+
 	return nil
 }
 
-// GetStats 获取缓冲区统计信息
-func (bm *ExtendedBufferManager) GetStats() ExtendedBufferStats {
-	bm.statsMutex.RLock()
-	defer bm.statsMutex.RUnlock()
-	
-	bm.platformMutex.RLock()
-	bm.interfaceMutex.RLock()
-	bm.subinterfaceMutex.RLock()
-	
-	stats := bm.stats
-	stats.PlatformBufferSize = len(bm.platformBuffer)
-	stats.InterfaceBufferSize = len(bm.interfaceBuffer)
-	stats.SubinterfaceBufferSize = len(bm.subinterfaceBuffer)
-	
-	bm.subinterfaceMutex.RUnlock()
-	bm.interfaceMutex.RUnlock()
-	bm.platformMutex.RUnlock()
-	
-	return stats
+// generatePrecisePlatformKey 生成精确的平台指标聚合键
+func (bm *FixedBufferManager) generatePrecisePlatformKey(metric *models.PlatformMetric) string {
+	// 使用精确到秒的时间戳 + 系统ID + 组件名称
+	// 这样可以避免不同组件的数据被错误聚合
+	return fmt.Sprintf("%d_%s_%s",
+		metric.Timestamp.Truncate(time.Second).Unix(),
+		metric.SystemID,
+		metric.ComponentName,
+	)
 }
 
-// FlushAll 刷新所有缓冲区 - 优化版本
-func (bm *ExtendedBufferManager) FlushAll() error {
+// generatePreciseInterfaceKey 生成精确的接口指标聚合键
+func (bm *FixedBufferManager) generatePreciseInterfaceKey(metric *models.InterfaceMetric) string {
+	// 使用精确到秒的时间戳 + 系统ID + 接口名称
+	return fmt.Sprintf("%d_%s_%s",
+		metric.Timestamp.Truncate(time.Second).Unix(),
+		metric.SystemID,
+		metric.InterfaceName,
+	)
+}
+
+// generatePreciseSubinterfaceKey 生成精确的子接口指标聚合键
+func (bm *FixedBufferManager) generatePreciseSubinterfaceKey(metric *models.SubinterfaceMetric) string {
+	// 使用精确到秒的时间戳 + 系统ID + 接口名称 + 子接口名称
+	return fmt.Sprintf("%d_%s_%s_%s",
+		metric.Timestamp.Truncate(time.Second).Unix(),
+		metric.SystemID,
+		metric.InterfaceName,
+		metric.SubinterfaceName,
+	)
+}
+
+// mergePlatformMetric 合并平台指标数据 - 保持数据完整性
+func (bm *FixedBufferManager) mergePlatformMetric(existing, new *models.PlatformMetric) {
+	// 只合并非空字段，避免覆盖有效数据
+	if new.OperStatus != nil && (existing.OperStatus == nil || *existing.OperStatus == "") {
+		existing.OperStatus = new.OperStatus
+	}
+	if new.Uptime != nil && (existing.Uptime == nil || *existing.Uptime == "") {
+		existing.Uptime = new.Uptime
+	}
+	if new.UsedPower != nil && (existing.UsedPower == nil || *existing.UsedPower == 0) {
+		existing.UsedPower = new.UsedPower
+	}
+	if new.AllocatedPower != nil && (existing.AllocatedPower == nil || *existing.AllocatedPower == 0) {
+		existing.AllocatedPower = new.AllocatedPower
+	}
+	// 继续合并其他重要字段...
+	if new.MemAlarmStatus != nil && existing.MemAlarmStatus == nil {
+		existing.MemAlarmStatus = new.MemAlarmStatus
+	}
+	if new.CPUAlarmStatus != nil && existing.CPUAlarmStatus == nil {
+		existing.CPUAlarmStatus = new.CPUAlarmStatus
+	}
+}
+
+// mergeInterfaceMetric 合并接口指标数据 - 保持数据完整性
+func (bm *FixedBufferManager) mergeInterfaceMetric(existing, new *models.InterfaceMetric) {
+	// 只合并非空字段，避免覆盖有效数据
+	if new.AdminStatusStr != nil && (existing.AdminStatusStr == nil || *existing.AdminStatusStr == "") {
+		existing.AdminStatusStr = new.AdminStatusStr
+	}
+	if new.OperStatusStr != nil && (existing.OperStatusStr == nil || *existing.OperStatusStr == "") {
+		existing.OperStatusStr = new.OperStatusStr
+	}
+	if new.PhyStatusStr != nil && (existing.PhyStatusStr == nil || *existing.PhyStatusStr == "") {
+		existing.PhyStatusStr = new.PhyStatusStr
+	}
+	// 合并统计数据 - 使用最新值
+	if new.InOctets != nil {
+		existing.InOctets = new.InOctets
+	}
+	if new.OutOctets != nil {
+		existing.OutOctets = new.OutOctets
+	}
+}
+
+// mergeSubinterfaceMetric 合并子接口指标数据 - 保持数据完整性
+func (bm *FixedBufferManager) mergeSubinterfaceMetric(existing, new *models.SubinterfaceMetric) {
+	// 只合并非空字段，避免覆盖有效数据
+	if new.AdminStatusStr != nil && (existing.AdminStatusStr == nil || *existing.AdminStatusStr == "") {
+		existing.AdminStatusStr = new.AdminStatusStr
+	}
+	if new.OperStatusStr != nil && (existing.OperStatusStr == nil || *existing.OperStatusStr == "") {
+		existing.OperStatusStr = new.OperStatusStr
+	}
+	// 合并统计数据 - 使用最新值
+	if new.InOctets != nil {
+		existing.InOctets = new.InOctets
+	}
+	if new.OutOctets != nil {
+		existing.OutOctets = new.OutOctets
+	}
+}
+
+// startParallelWriters 启动并行写入器
+func (bm *FixedBufferManager) startParallelWriters() {
+	// 启动平台指标写入器
+	for i := 0; i < bm.writerConfig.ParallelWriters; i++ {
+		go bm.platformWriter()
+	}
+	
+	// 启动接口指标写入器
+	for i := 0; i < bm.writerConfig.ParallelWriters; i++ {
+		go bm.interfaceWriter()
+	}
+	
+	// 启动子接口指标写入器
+	for i := 0; i < bm.writerConfig.ParallelWriters; i++ {
+		go bm.subinterfaceWriter()
+	}
+}
+
+// platformWriter 平台指标写入器
+func (bm *FixedBufferManager) platformWriter() {
+	for {
+		select {
+		case batch := <-bm.platformWriteChan:
+			if err := bm.writeWithRetry(func() error {
+				return bm.db.BatchInsertPlatformMetrics(batch)
+			}); err != nil {
+				bm.logger.Errorf("平台指标写入失败: %v", err)
+				bm.statsMutex.Lock()
+				bm.stats.TotalErrors++
+				bm.statsMutex.Unlock()
+			} else {
+				bm.statsMutex.Lock()
+				bm.stats.TotalRecordsWritten += int64(len(batch))
+				bm.statsMutex.Unlock()
+			}
+		case <-bm.stopChan:
+			return
+		}
+	}
+}
+
+// interfaceWriter 接口指标写入器
+func (bm *FixedBufferManager) interfaceWriter() {
+	for {
+		select {
+		case batch := <-bm.interfaceWriteChan:
+			if err := bm.writeWithRetry(func() error {
+				return bm.db.BatchInsertInterfaceMetrics(batch)
+			}); err != nil {
+				bm.logger.Errorf("接口指标写入失败: %v", err)
+				bm.statsMutex.Lock()
+				bm.stats.TotalErrors++
+				bm.statsMutex.Unlock()
+			} else {
+				bm.statsMutex.Lock()
+				bm.stats.TotalRecordsWritten += int64(len(batch))
+				bm.statsMutex.Unlock()
+			}
+		case <-bm.stopChan:
+			return
+		}
+	}
+}
+
+// subinterfaceWriter 子接口指标写入器
+func (bm *FixedBufferManager) subinterfaceWriter() {
+	for {
+		select {
+		case batch := <-bm.subinterfaceWriteChan:
+			if err := bm.writeWithRetry(func() error {
+				return bm.db.BatchInsertSubinterfaceMetrics(batch)
+			}); err != nil {
+				bm.logger.Errorf("子接口指标写入失败: %v", err)
+				bm.statsMutex.Lock()
+				bm.stats.TotalErrors++
+				bm.statsMutex.Unlock()
+			} else {
+				bm.statsMutex.Lock()
+				bm.stats.TotalRecordsWritten += int64(len(batch))
+				bm.statsMutex.Unlock()
+			}
+		case <-bm.stopChan:
+			return
+		}
+	}
+}
+
+// writeWithRetry 带重试的写入
+func (bm *FixedBufferManager) writeWithRetry(writeFunc func() error) error {
+	var lastErr error
+	
+	for attempt := 0; attempt < bm.writerConfig.RetryAttempts; attempt++ {
+		if attempt > 0 {
+			time.Sleep(bm.writerConfig.RetryDelay)
+			bm.logger.Debugf("重试写入，第 %d 次尝试", attempt+1)
+		}
+		
+		ctx, cancel := context.WithTimeout(context.Background(), bm.writerConfig.BatchTimeout)
+		
+		done := make(chan error, 1)
+		go func() {
+			done <- writeFunc()
+		}()
+		
+		select {
+		case err := <-done:
+			cancel()
+			if err == nil {
+				return nil
+			}
+			lastErr = err
+			bm.logger.Warnf("写入失败 (尝试 %d/%d): %v", attempt+1, bm.writerConfig.RetryAttempts, err)
+		case <-ctx.Done():
+			cancel()
+			lastErr = fmt.Errorf("写入超时")
+			bm.logger.Warnf("写入超时 (尝试 %d/%d)", attempt+1, bm.writerConfig.RetryAttempts)
+		}
+	}
+	
+	return fmt.Errorf("写入失败，已重试 %d 次: %v", bm.writerConfig.RetryAttempts, lastErr)
+}
+
+// FlushAll 刷新所有缓冲区
+func (bm *FixedBufferManager) FlushAll() error {
 	start := time.Now()
 	var errs []error
 	
@@ -275,7 +479,7 @@ func (bm *ExtendedBufferManager) FlushAll() error {
 }
 
 // FlushPlatformMetrics 刷新平台指标缓冲区
-func (bm *ExtendedBufferManager) FlushPlatformMetrics() error {
+func (bm *FixedBufferManager) FlushPlatformMetrics() error {
 	bm.platformMutex.Lock()
 	defer bm.platformMutex.Unlock()
 	
@@ -283,7 +487,7 @@ func (bm *ExtendedBufferManager) FlushPlatformMetrics() error {
 }
 
 // FlushInterfaceMetrics 刷新接口指标缓冲区
-func (bm *ExtendedBufferManager) FlushInterfaceMetrics() error {
+func (bm *FixedBufferManager) FlushInterfaceMetrics() error {
 	bm.interfaceMutex.Lock()
 	defer bm.interfaceMutex.Unlock()
 	
@@ -291,191 +495,28 @@ func (bm *ExtendedBufferManager) FlushInterfaceMetrics() error {
 }
 
 // FlushSubinterfaceMetrics 刷新子接口指标缓冲区
-func (bm *ExtendedBufferManager) FlushSubinterfaceMetrics() error {
+func (bm *FixedBufferManager) FlushSubinterfaceMetrics() error {
 	bm.subinterfaceMutex.Lock()
 	defer bm.subinterfaceMutex.Unlock()
 	
 	return bm.flushSubinterfaceMetrics()
 }
 
-// Stop 停止缓冲区管理器
-func (bm *ExtendedBufferManager) Stop() {
-	close(bm.stopChan)
-	
-	// 最后一次刷新所有缓冲区
-	bm.FlushAll()
-	
-	// 关闭写入通道
-	close(bm.platformWriteChan)
-	close(bm.interfaceWriteChan)
-	close(bm.subinterfaceWriteChan)
-	
-	// 等待所有写入器完成
-	bm.wg.Wait()
-}
-
-// 启动并行写入器
-func (bm *ExtendedBufferManager) startParallelWriters() {
-	// 启动平台指标写入器
-	for i := 0; i < bm.writerConfig.PlatformWriterCount; i++ {
-		bm.wg.Add(1)
-		go bm.platformWriter(i)
-	}
-	
-	// 启动接口指标写入器
-	for i := 0; i < bm.writerConfig.InterfaceWriterCount; i++ {
-		bm.wg.Add(1)
-		go bm.interfaceWriter(i)
-	}
-	
-	// 启动子接口指标写入器
-	for i := 0; i < bm.writerConfig.SubinterfaceWriterCount; i++ {
-		bm.wg.Add(1)
-		go bm.subinterfaceWriter(i)
-	}
-}
-
-// 平台指标写入器
-func (bm *ExtendedBufferManager) platformWriter(id int) {
-	defer bm.wg.Done()
-	
-	for {
-		select {
-		case metrics, ok := <-bm.platformWriteChan:
-			if !ok {
-				return
-			}
-			
-			// 带重试的写入
-			if err := bm.writeWithRetry(func() error {
-				return bm.db.BatchInsertPlatformMetrics(metrics)
-			}); err != nil {
-				bm.logger.WithError(err).Errorf("平台指标写入器 %d 写入失败", id)
-				bm.statsMutex.Lock()
-				bm.stats.TotalErrors++
-				bm.statsMutex.Unlock()
-			} else {
-				bm.statsMutex.Lock()
-				bm.stats.TotalProcessed += int64(len(metrics))
-				bm.statsMutex.Unlock()
-			}
-			
-		case <-bm.stopChan:
-			return
-		}
-	}
-}
-
-// 接口指标写入器
-func (bm *ExtendedBufferManager) interfaceWriter(id int) {
-	defer bm.wg.Done()
-	
-	for {
-		select {
-		case metrics, ok := <-bm.interfaceWriteChan:
-			if !ok {
-				return
-			}
-			
-			// 带重试的写入
-			if err := bm.writeWithRetry(func() error {
-				return bm.db.BatchInsertInterfaceMetrics(metrics)
-			}); err != nil {
-				bm.logger.WithError(err).Errorf("接口指标写入器 %d 写入失败", id)
-				bm.statsMutex.Lock()
-				bm.stats.TotalErrors++
-				bm.statsMutex.Unlock()
-			} else {
-				bm.statsMutex.Lock()
-				bm.stats.TotalProcessed += int64(len(metrics))
-				bm.statsMutex.Unlock()
-			}
-			
-		case <-bm.stopChan:
-			return
-		}
-	}
-}
-
-// 子接口指标写入器
-func (bm *ExtendedBufferManager) subinterfaceWriter(id int) {
-	defer bm.wg.Done()
-	
-	for {
-		select {
-		case metrics, ok := <-bm.subinterfaceWriteChan:
-			if !ok {
-				return
-			}
-			
-			// 带重试的写入
-			if err := bm.writeWithRetry(func() error {
-				return bm.db.BatchInsertSubinterfaceMetrics(metrics)
-			}); err != nil {
-				bm.logger.WithError(err).Errorf("子接口指标写入器 %d 写入失败", id)
-				bm.statsMutex.Lock()
-				bm.stats.TotalErrors++
-				bm.statsMutex.Unlock()
-			} else {
-				bm.statsMutex.Lock()
-				bm.stats.TotalProcessed += int64(len(metrics))
-				bm.statsMutex.Unlock()
-			}
-			
-		case <-bm.stopChan:
-			return
-		}
-	}
-}
-
-// 带重试的写入
-func (bm *ExtendedBufferManager) writeWithRetry(writeFunc func() error) error {
-	var lastErr error
-	
-	for attempt := 0; attempt < bm.writerConfig.RetryAttempts; attempt++ {
-		if attempt > 0 {
-			time.Sleep(bm.writerConfig.RetryDelay)
-			bm.logger.Debugf("重试写入，第 %d 次尝试", attempt+1)
-		}
-		
-		ctx, cancel := context.WithTimeout(context.Background(), bm.writerConfig.BatchTimeout)
-		
-		done := make(chan error, 1)
-		go func() {
-			done <- writeFunc()
-		}()
-		
-		select {
-		case err := <-done:
-			cancel()
-			if err == nil {
-				return nil
-			}
-			lastErr = err
-			bm.logger.WithError(err).Debugf("写入失败，尝试 %d/%d", attempt+1, bm.writerConfig.RetryAttempts)
-			
-		case <-ctx.Done():
-			cancel()
-			lastErr = fmt.Errorf("写入超时")
-			bm.logger.Debugf("写入超时，尝试 %d/%d", attempt+1, bm.writerConfig.RetryAttempts)
-		}
-	}
-	
-	return fmt.Errorf("写入失败，已重试 %d 次: %v", bm.writerConfig.RetryAttempts, lastErr)
-}
-
-// 内部刷新函数（需要在持有锁的情况下调用）
-func (bm *ExtendedBufferManager) flushPlatformMetrics() error {
+// flushPlatformMetrics 内部平台指标刷新方法
+func (bm *FixedBufferManager) flushPlatformMetrics() error {
 	if len(bm.platformBuffer) == 0 {
 		return nil
 	}
-	
-	// 将map转换为slice
+
+	// 转换为切片
 	metrics := make([]models.PlatformMetric, 0, len(bm.platformBuffer))
 	for _, metric := range bm.platformBuffer {
 		metrics = append(metrics, *metric)
 	}
-	
+
+	// 清空缓冲区
+	bm.platformBuffer = make(map[string]*models.PlatformMetric)
+
 	// 分批发送到写入器
 	batchSize := bm.writerConfig.MaxBatchSize
 	for i := 0; i < len(metrics); i += batchSize {
@@ -489,32 +530,33 @@ func (bm *ExtendedBufferManager) flushPlatformMetrics() error {
 		case bm.platformWriteChan <- batch:
 			// 成功发送到写入器
 		default:
-			// 写入通道满了，直接写入
+			// 写入通道满，直接写入
 			if err := bm.writeWithRetry(func() error {
 				return bm.db.BatchInsertPlatformMetrics(batch)
 			}); err != nil {
-				bm.logger.WithError(err).Error("直接写入平台指标失败")
 				return err
 			}
 		}
 	}
-	
-	bm.logger.Infof("成功刷新 %d 条平台指标数据", len(metrics))
-	bm.platformBuffer = make(map[string]*models.PlatformMetric) // 清空缓冲区
+
 	return nil
 }
 
-func (bm *ExtendedBufferManager) flushInterfaceMetrics() error {
+// flushInterfaceMetrics 内部接口指标刷新方法
+func (bm *FixedBufferManager) flushInterfaceMetrics() error {
 	if len(bm.interfaceBuffer) == 0 {
 		return nil
 	}
-	
-	// 将map转换为slice
+
+	// 转换为切片
 	metrics := make([]models.InterfaceMetric, 0, len(bm.interfaceBuffer))
 	for _, metric := range bm.interfaceBuffer {
 		metrics = append(metrics, *metric)
 	}
-	
+
+	// 清空缓冲区
+	bm.interfaceBuffer = make(map[string]*models.InterfaceMetric)
+
 	// 分批发送到写入器
 	batchSize := bm.writerConfig.MaxBatchSize
 	for i := 0; i < len(metrics); i += batchSize {
@@ -528,32 +570,33 @@ func (bm *ExtendedBufferManager) flushInterfaceMetrics() error {
 		case bm.interfaceWriteChan <- batch:
 			// 成功发送到写入器
 		default:
-			// 写入通道满了，直接写入
+			// 写入通道满，直接写入
 			if err := bm.writeWithRetry(func() error {
 				return bm.db.BatchInsertInterfaceMetrics(batch)
 			}); err != nil {
-				bm.logger.WithError(err).Error("直接写入接口指标失败")
 				return err
 			}
 		}
 	}
-	
-	bm.logger.Infof("成功刷新 %d 条接口指标数据", len(metrics))
-	bm.interfaceBuffer = make(map[string]*models.InterfaceMetric) // 清空缓冲区
+
 	return nil
 }
 
-func (bm *ExtendedBufferManager) flushSubinterfaceMetrics() error {
+// flushSubinterfaceMetrics 内部子接口指标刷新方法
+func (bm *FixedBufferManager) flushSubinterfaceMetrics() error {
 	if len(bm.subinterfaceBuffer) == 0 {
 		return nil
 	}
-	
-	// 将map转换为slice
+
+	// 转换为切片
 	metrics := make([]models.SubinterfaceMetric, 0, len(bm.subinterfaceBuffer))
 	for _, metric := range bm.subinterfaceBuffer {
 		metrics = append(metrics, *metric)
 	}
-	
+
+	// 清空缓冲区
+	bm.subinterfaceBuffer = make(map[string]*models.SubinterfaceMetric)
+
 	// 分批发送到写入器
 	batchSize := bm.writerConfig.MaxBatchSize
 	for i := 0; i < len(metrics); i += batchSize {
@@ -567,23 +610,20 @@ func (bm *ExtendedBufferManager) flushSubinterfaceMetrics() error {
 		case bm.subinterfaceWriteChan <- batch:
 			// 成功发送到写入器
 		default:
-			// 写入通道满了，直接写入
+			// 写入通道满，直接写入
 			if err := bm.writeWithRetry(func() error {
 				return bm.db.BatchInsertSubinterfaceMetrics(batch)
 			}); err != nil {
-				bm.logger.WithError(err).Error("直接写入子接口指标失败")
 				return err
 			}
 		}
 	}
-	
-	bm.logger.Infof("成功刷新 %d 条子接口指标数据", len(metrics))
-	bm.subinterfaceBuffer = make(map[string]*models.SubinterfaceMetric) // 清空缓冲区
+
 	return nil
 }
 
 // startFlushTimer 启动定时刷新
-func (bm *ExtendedBufferManager) startFlushTimer() {
+func (bm *FixedBufferManager) startFlushTimer() {
 	bm.flushTimer = time.NewTimer(bm.config.FlushInterval)
 	
 	go func() {
@@ -593,7 +633,6 @@ func (bm *ExtendedBufferManager) startFlushTimer() {
 				bm.logger.Debug("定时刷新缓冲区")
 				bm.FlushAll()
 				bm.flushTimer.Reset(bm.config.FlushInterval)
-				
 			case <-bm.stopChan:
 				bm.flushTimer.Stop()
 				return
@@ -602,41 +641,38 @@ func (bm *ExtendedBufferManager) startFlushTimer() {
 	}()
 }
 
-// 生成聚合键的辅助函数（复用原有逻辑）
-func (bm *ExtendedBufferManager) generatePlatformKey(metric *models.PlatformMetric) string {
-	return fmt.Sprintf("%d_%s_%s", 
-		metric.Timestamp.Unix(), 
-		metric.SystemID, 
-		metric.ComponentName)
+// Stop 停止缓冲区管理器
+func (bm *FixedBufferManager) Stop() error {
+	// 使用select防止重复关闭channel
+	select {
+	case <-bm.stopChan:
+		// channel已经关闭，直接返回
+		return nil
+	default:
+		close(bm.stopChan)
+	}
+	
+	// 最后刷新一次
+	return bm.FlushAll()
 }
 
-func (bm *ExtendedBufferManager) generateInterfaceKey(metric *models.InterfaceMetric) string {
-	return fmt.Sprintf("%d_%s_%s", 
-		metric.Timestamp.Unix(), 
-		metric.SystemID, 
-		metric.InterfaceName)
-}
-
-func (bm *ExtendedBufferManager) generateSubinterfaceKey(metric *models.SubinterfaceMetric) string {
-	return fmt.Sprintf("%d_%s_%s_%s", 
-		metric.Timestamp.Unix(), 
-		metric.SystemID, 
-		metric.InterfaceName,
-		metric.SubinterfaceName)
-}
-
-// 数据合并函数（复用原有逻辑，这里省略具体实现）
-func (bm *ExtendedBufferManager) mergePlatformMetric(existing, new *models.PlatformMetric) {
-	// 实现与原有 buffer_manager.go 中相同的合并逻辑
-	// 这里省略具体实现以节省空间
-}
-
-func (bm *ExtendedBufferManager) mergeInterfaceMetric(existing, new *models.InterfaceMetric) {
-	// 实现与原有 buffer_manager.go 中相同的合并逻辑
-	// 这里省略具体实现以节省空间
-}
-
-func (bm *ExtendedBufferManager) mergeSubinterfaceMetric(existing, new *models.SubinterfaceMetric) {
-	// 实现与原有 buffer_manager.go 中相同的合并逻辑
-	// 这里省略具体实现以节省空间
+// GetStats 获取缓冲区统计信息
+func (bm *FixedBufferManager) GetStats() FixedBufferStats {
+	bm.statsMutex.RLock()
+	defer bm.statsMutex.RUnlock()
+	
+	bm.platformMutex.RLock()
+	bm.interfaceMutex.RLock()
+	bm.subinterfaceMutex.RLock()
+	
+	stats := bm.stats
+	stats.PlatformBufferSize = len(bm.platformBuffer)
+	stats.InterfaceBufferSize = len(bm.interfaceBuffer)
+	stats.SubinterfaceBufferSize = len(bm.subinterfaceBuffer)
+	
+	bm.subinterfaceMutex.RUnlock()
+	bm.interfaceMutex.RUnlock()
+	bm.platformMutex.RUnlock()
+	
+	return stats
 }

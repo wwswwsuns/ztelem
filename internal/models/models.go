@@ -170,7 +170,7 @@ func (i IPv6OperStatus) Value() (driver.Value, error) {
 
 // PlatformMetric 平台指标数据结构
 type PlatformMetric struct {
-	Timestamp     time.Time `json:"timestamp" db:"time"`
+	Timestamp     time.Time `json:"timestamp" db:"timestamp"`
 	SystemID      string    `json:"system_id" db:"system_id"`
 	ComponentName string    `json:"component_name" db:"component_name"`
 
@@ -282,7 +282,7 @@ type PlatformMetric struct {
 
 // InterfaceMetric 接口指标数据结构
 type InterfaceMetric struct {
-	Timestamp     time.Time `json:"timestamp" db:"time"`
+	Timestamp     time.Time `json:"timestamp" db:"timestamp"`
 	SystemID      string    `json:"system_id" db:"system_id"`
 	InterfaceName string    `json:"interface_name" db:"interface_name"`
 
@@ -359,7 +359,7 @@ type InterfaceMetric struct {
 // SubinterfaceMetric 子接口指标数据结构
 type SubinterfaceMetric struct {
 	// 基本信息
-	Timestamp        time.Time `json:"timestamp" db:"time"`
+	Timestamp        time.Time `json:"timestamp" db:"timestamp"`
 	SystemID         string    `json:"system_id" db:"system_id"`
 	InterfaceName    string    `json:"interface_name" db:"interface_name"`
 	SubinterfaceName string    `json:"subinterface_name" db:"subinterface_index"`

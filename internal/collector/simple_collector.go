@@ -3,10 +3,8 @@ package collector
 import (
 	"fmt"
 	"net"
-	"time"
 
 	"github.com/wwswwsuns/ztelem/internal/buffer"
-	"github.com/wwswwsuns/ztelem/internal/config"
 	"github.com/wwswwsuns/ztelem/internal/database"
 	"github.com/wwswwsuns/ztelem/internal/parser"
 	"github.com/wwswwsuns/ztelem/proto/zte_dialout"
@@ -19,42 +17,17 @@ import (
 type SimpleCollector struct {
 	proto.UnimplementedZtedialoutServiceServer
 	logger        *logrus.Logger
-	db            *database.ExtendedDB
+	db            *database.Database
 	parser        *parser.TelemetryParser
-	bufferManager *buffer.ExtendedBufferManager
+	bufferManager *buffer.FixedBufferManager
 	server        *grpc.Server
 	listener      net.Listener
 }
 
 // NewSimpleCollector 创建简化的采集器
-func NewSimpleCollector(logger *logrus.Logger, db *database.ExtendedDB) *SimpleCollector {
-	// 使用默认配置
-	bufferConfig := config.BufferConfig{
-		MaxSize:        100000,
-		FlushThreshold: 15000,
-		FlushInterval:  15 * time.Second,
-		BatchSize:      2000,
-		PlatformBufferSize:     30000,
-		InterfaceBufferSize:    40000,
-		SubinterfaceBufferSize: 30000,
-	}
-	
-	writerConfig := config.DatabaseWriterConfig{
-		ParallelWriters:         5,
-		PlatformWriterCount:     2,
-		InterfaceWriterCount:    2,
-		SubinterfaceWriterCount: 1,
-		MaxBatchSize:           2000,
-		BatchTimeout:           30 * time.Second,
-		RetryAttempts:          3,
-		RetryDelay:             time.Second,
-	}
-	
-	bufferManager := buffer.NewExtendedBufferManager(bufferConfig, writerConfig, logger, db)
-	
+func NewSimpleCollector(logger *logrus.Logger, bufferManager *buffer.FixedBufferManager) *SimpleCollector {
 	return &SimpleCollector{
 		logger:        logger,
-		db:            db,
 		parser:        parser.NewTelemetryParser(logger),
 		bufferManager: bufferManager,
 	}

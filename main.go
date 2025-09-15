@@ -15,7 +15,7 @@ import (
 	"github.com/wwswwsuns/ztelem/internal/collector"
 	"github.com/wwswwsuns/ztelem/internal/config"
 	"github.com/wwswwsuns/ztelem/internal/database"
-
+	"github.com/wwswwsuns/ztelem/internal/monitoring"
 	"github.com/sirupsen/logrus"
 )
 
@@ -44,17 +44,19 @@ func main() {
 	// 打印配置信息
 	printConfigSummary(log, cfg)
 
-	// 初始化扩展数据库连接
-	db, err := database.NewExtendedConnection(cfg.Database)
+	// 初始化数据库连接
+	db, err := database.NewDatabase(
+		cfg.Database.Host,
+		cfg.Database.Port,
+		cfg.Database.User,
+		cfg.Database.Password,
+		cfg.Database.Database,
+		log,
+	)
 	if err != nil {
 		log.WithError(err).Fatal("数据库连接失败")
 	}
 	defer db.Close()
-
-	// 测试数据库连接
-	if err := db.TestConnection(); err != nil {
-		log.WithError(err).Fatal("数据库连接测试失败")
-	}
 
 	// 打印数据库连接池状态
 	stats := db.GetStats()
@@ -62,19 +64,19 @@ func main() {
 		stats.OpenConnections, stats.InUse, stats.Idle)
 
 	// 创建扩展缓冲区管理器
-	bufferManager := buffer.NewExtendedBufferManager(
-		cfg.Buffer, 
-		cfg.DatabaseWriter, 
-		log, 
+	bufferManager := buffer.NewFixedBufferManager(
 		db,
+		cfg.Buffer,
+		cfg.DatabaseWriter,
+		log,
 	)
 
 	// 创建采集器
-	telemetryCollector := collector.NewSimpleCollector(log, db)
+	telemetryCollector := collector.NewSimpleCollector(log, bufferManager)
 
 	// 启动监控服务（如果启用）
 	if cfg.Monitoring.Enabled {
-		go startMonitoringService(cfg.Monitoring, log, bufferManager, db)
+		startMonitoringService(cfg.Monitoring, log, bufferManager, db)
 	}
 
 	// 优雅关闭处理
@@ -108,7 +110,9 @@ func main() {
 	telemetryCollector.Stop()
 
 	// 停止缓冲区管理器
-	bufferManager.Stop()
+	if err := bufferManager.Stop(); err != nil {
+		log.WithError(err).Error("停止缓冲区管理器失败")
+	}
 
 	// 等待一段时间让服务完全停止
 	time.Sleep(3 * time.Second)
@@ -200,41 +204,59 @@ func printConfigSummary(log *logrus.Logger, cfg *config.Config) {
 }
 
 // startMonitoringService 启动监控服务
-func startMonitoringService(monConfig config.MonitoringConfig, log *logrus.Logger, bufferManager *buffer.ExtendedBufferManager, db *database.ExtendedDB) {
+func startMonitoringService(monConfig config.MonitoringConfig, log *logrus.Logger, bufferManager *buffer.FixedBufferManager, db *database.Database) *monitoring.PrometheusServer {
 	log.Infof("启动监控服务，健康检查端口: %d", monConfig.HealthCheckPort)
 	
-	// 这里可以实现 HTTP 健康检查端点
-	// 以及 Prometheus 指标暴露
-	// 暂时只做日志记录
-	
-	ticker := time.NewTicker(monConfig.MetricsInterval)
-	defer ticker.Stop()
-	
-	for {
-		select {
-		case <-ticker.C:
-			// 获取缓冲区统计信息
-			bufferStats := bufferManager.GetStats()
-			dbStats := db.GetStats()
-			
-			log.Infof("监控指标 - 缓冲区: Platform=%d, Interface=%d, Subinterface=%d, 已处理=%d, 错误=%d", 
-				bufferStats.PlatformBufferSize, 
-				bufferStats.InterfaceBufferSize, 
-				bufferStats.SubinterfaceBufferSize,
-				bufferStats.TotalProcessed,
-				bufferStats.TotalErrors)
-			
-			log.Infof("监控指标 - 数据库连接: Open=%d, InUse=%d, Idle=%d", 
-				dbStats.OpenConnections, dbStats.InUse, dbStats.Idle)
-			
-			// 检查告警阈值
-			checkAlertThresholds(log, monConfig.AlertThresholds, bufferStats, dbStats)
-		}
+	// 启动Prometheus指标服务器（如果启用）
+	var prometheusServer *monitoring.PrometheusServer
+	if monConfig.PrometheusEnabled {
+		prometheusServer = monitoring.NewPrometheusServer(monConfig.PrometheusPort, log)
+		go func() {
+			if err := prometheusServer.Start(); err != nil {
+				log.WithError(err).Error("Prometheus服务器启动失败")
+			}
+		}()
+		log.Infof("Prometheus指标服务已启动，端口: %d", monConfig.PrometheusPort)
 	}
+	
+	// 启动指标更新循环
+	go func() {
+		ticker := time.NewTicker(monConfig.MetricsInterval)
+		defer ticker.Stop()
+		
+		for {
+			select {
+			case <-ticker.C:
+				// 获取缓冲区统计信息
+				bufferStats := bufferManager.GetStats()
+				dbStats := db.GetStats()
+				
+				log.Infof("监控指标 - 缓冲区: Platform=%d, Interface=%d, Subinterface=%d, 已处理=%d, 错误=%d", 
+					bufferStats.PlatformBufferSize, 
+					bufferStats.InterfaceBufferSize, 
+					bufferStats.SubinterfaceBufferSize,
+					bufferStats.TotalRecordsProcessed,
+					bufferStats.TotalErrors)
+				
+				log.Infof("监控指标 - 数据库连接: Open=%d, InUse=%d, Idle=%d", 
+					dbStats.OpenConnections, dbStats.InUse, dbStats.Idle)
+				
+				// 更新Prometheus指标
+				if prometheusServer != nil {
+					updatePrometheusMetrics(prometheusServer, bufferStats, dbStats)
+				}
+				
+				// 检查告警阈值
+				checkAlertThresholds(log, monConfig.AlertThresholds, bufferStats, dbStats)
+			}
+		}
+	}()
+	
+	return prometheusServer
 }
 
 // checkAlertThresholds 检查告警阈值
-func checkAlertThresholds(log *logrus.Logger, thresholds config.AlertThresholdsConfig, bufferStats buffer.ExtendedBufferStats, dbStats sql.DBStats) {
+func checkAlertThresholds(log *logrus.Logger, thresholds config.AlertThresholdsConfig, bufferStats buffer.FixedBufferStats, dbStats sql.DBStats) {
 	// 检查缓冲区使用率
 	totalBufferSize := bufferStats.PlatformBufferSize + bufferStats.InterfaceBufferSize + bufferStats.SubinterfaceBufferSize
 	if totalBufferSize > 0 {
@@ -252,8 +274,36 @@ func checkAlertThresholds(log *logrus.Logger, thresholds config.AlertThresholdsC
 	}
 }
 
+// updatePrometheusMetrics 更新Prometheus指标
+func updatePrometheusMetrics(prometheusServer *monitoring.PrometheusServer, bufferStats buffer.FixedBufferStats, dbStats sql.DBStats) {
+	// 更新缓冲区指标
+	prometheusServer.UpdateBufferSize("platform", float64(bufferStats.PlatformBufferSize))
+	prometheusServer.UpdateBufferSize("interface", float64(bufferStats.InterfaceBufferSize))
+	prometheusServer.UpdateBufferSize("subinterface", float64(bufferStats.SubinterfaceBufferSize))
+	
+	// 更新数据库连接池指标
+	prometheusServer.UpdateDBPoolConnections("open", float64(dbStats.OpenConnections))
+	prometheusServer.UpdateDBPoolConnections("in_use", float64(dbStats.InUse))
+	prometheusServer.UpdateDBPoolConnections("idle", float64(dbStats.Idle))
+	
+	// 更新系统指标
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	prometheusServer.UpdateSystemMetrics(
+		float64(runtime.NumGoroutine()),
+		float64(m.Alloc),
+		float64(m.Sys),
+		float64(m.HeapAlloc),
+		float64(m.HeapSys),
+	)
+	
+	// 更新处理统计
+	prometheusServer.UpdateProcessedRecords("total", float64(bufferStats.TotalRecordsProcessed))
+	prometheusServer.UpdateProcessedRecords("errors", float64(bufferStats.TotalErrors))
+}
+
 // startStatusReporter 启动状态报告器
-func startStatusReporter(log *logrus.Logger, bufferManager *buffer.ExtendedBufferManager, db *database.ExtendedDB, interval time.Duration) {
+func startStatusReporter(log *logrus.Logger, bufferManager *buffer.FixedBufferManager, db *database.Database, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	
