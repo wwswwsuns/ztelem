@@ -59,4 +59,4 @@ coverage.xml
 vendor/
 
 # 本地测试脚本
-./scripts/*
+/scripts/
