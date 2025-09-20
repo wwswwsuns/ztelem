@@ -10,6 +10,16 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+// convertUnixTimestamp 将uint32的Unix时间戳转换为time.Time指针
+// 如果时间戳为0，返回nil
+func convertUnixTimestamp(timestamp uint32) *time.Time {
+	if timestamp == 0 {
+		return nil
+	}
+	t := time.Unix(int64(timestamp), 0).UTC()
+	return &t
+}
+
 // parseAlarmData 解析告警数据 (data_type = ALARM)
 func (p *TelemetryParser) parseAlarmData(msg *zteTelemetry.Telemetry) ([]models.AlarmReportMetric, []models.NotificationReportMetric, error) {
 	p.logger.Debugf("🚨 开始解析告警数据: system_id=%s, sensor_path=%s, data_gpb_count=%d", 
@@ -87,9 +97,9 @@ func (p *TelemetryParser) parseCurrentAlarmReportFromGpb(dataGpb *zteTelemetry.N
 				FlowID:            alarm.GetFlowId(),
 				AlarmTimestamp:    alarm.GetTimestamp(),
 				Code:              alarm.GetCode(),
-				OccurrenceTime:    alarm.GetOccurrenceTime(),
-				UpdateTime:        alarm.GetUpdateTime(),
-				DisappearedTime:   alarm.GetDisappearedTime(),
+				OccurrenceTime:    convertUnixTimestamp(alarm.GetOccurrenceTime()),
+				UpdateTime:        convertUnixTimestamp(alarm.GetUpdateTime()),
+				DisappearedTime:   convertUnixTimestamp(alarm.GetDisappearedTime()),
 				OccurrenceMs:      alarm.GetOccurrenceMs(),
 				UpdateMs:          alarm.GetUpdateMs(),
 				DisappearedMs:     alarm.GetDisappearedMs(),
@@ -143,9 +153,9 @@ func (p *TelemetryParser) parseCurrentAlarmReportFromGpb(dataGpb *zteTelemetry.N
 		FlowID:            currentAlarm.GetFlowId(),
 		AlarmTimestamp:    currentAlarm.GetTimestamp(),
 		Code:              currentAlarm.GetCode(),
-		OccurrenceTime:    currentAlarm.GetOccurrenceTime(),
-		UpdateTime:        currentAlarm.GetUpdateTime(),
-		DisappearedTime:   currentAlarm.GetDisappearedTime(),
+		OccurrenceTime:    convertUnixTimestamp(currentAlarm.GetOccurrenceTime()),
+		UpdateTime:        convertUnixTimestamp(currentAlarm.GetUpdateTime()),
+		DisappearedTime:   convertUnixTimestamp(currentAlarm.GetDisappearedTime()),
 		OccurrenceMs:      currentAlarm.GetOccurrenceMs(),
 		UpdateMs:          currentAlarm.GetUpdateMs(),
 		DisappearedMs:     currentAlarm.GetDisappearedMs(),
@@ -195,7 +205,7 @@ func (p *TelemetryParser) parseNotificationReportFromGpb(dataGpb *zteTelemetry.N
 			FlowID:                notification.GetFlowId(),
 			NotificationTimestamp: notification.GetTimestamp(),
 			Code:                  notification.GetCode(),
-			OccurTime:             notification.GetOccurTime(),
+			OccurTime:             convertUnixTimestamp(notification.GetOccurTime()),
 			OccurMs:               notification.GetOccurMs(),
 			Classification:        stringPtr(notification.GetClassification()),
 			Sort:                  uint32Ptr(notification.GetSort()),

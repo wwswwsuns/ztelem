@@ -466,12 +466,12 @@ type AlarmReportMetric struct {
 	SystemID      string    `json:"system_id" db:"system_id"`
 	
 	// 告警基本信息
-	FlowID           uint32    `json:"flow_id" db:"flow_id"`                       // 告警流水号
-	AlarmTimestamp   uint32    `json:"alarm_timestamp" db:"alarm_timestamp"`       // 告警时间戳
-	Code             uint32    `json:"code" db:"code"`                             // 告警码
-	OccurrenceTime   uint32    `json:"occurrence_time" db:"occurrence_time"`       // 告警产生时间
-	UpdateTime       uint32    `json:"update_time" db:"update_time"`               // 告警更新时间
-	DisappearedTime  uint32    `json:"disappeared_time" db:"disappeared_time"`     // 告警消失时间
+	FlowID           uint32     `json:"flow_id" db:"flow_id"`                       // 告警流水号
+	AlarmTimestamp   uint32     `json:"alarm_timestamp" db:"alarm_timestamp"`       // 告警时间戳
+	Code             uint32     `json:"code" db:"code"`                             // 告警码
+	OccurrenceTime   *time.Time `json:"occurrence_time" db:"occurrence_time"`       // 告警产生时间
+	UpdateTime       *time.Time `json:"update_time" db:"update_time"`               // 告警更新时间
+	DisappearedTime  *time.Time `json:"disappeared_time" db:"disappeared_time"`     // 告警消失时间
 	OccurrenceMs     uint32    `json:"occurrence_ms" db:"occurrence_ms"`           // 告警产生毫秒数
 	UpdateMs         uint32    `json:"update_ms" db:"update_ms"`                   // 告警更新毫秒数
 	DisappearedMs    uint32    `json:"disappeared_ms" db:"disappeared_ms"`         // 告警消失毫秒数
@@ -527,10 +527,10 @@ type NotificationReportMetric struct {
 	SystemID      string    `json:"system_id" db:"system_id"`
 	
 	// 通知基本信息
-	FlowID              uint32    `json:"flow_id" db:"flow_id"`                               // 告警流水号
-	NotificationTimestamp uint32  `json:"notification_timestamp" db:"notification_timestamp"` // 通知时间戳
-	Code                uint32    `json:"code" db:"code"`                                     // 告警码
-	OccurTime           uint32    `json:"occur_time" db:"occur_time"`                         // 告警产生时间
+	FlowID              uint32     `json:"flow_id" db:"flow_id"`                               // 告警流水号
+	NotificationTimestamp uint32   `json:"notification_timestamp" db:"notification_timestamp"` // 通知时间戳
+	Code                uint32     `json:"code" db:"code"`                                     // 告警码
+	OccurTime           *time.Time `json:"occur_time" db:"occur_time"`                         // 告警产生时间
 	OccurMs             uint32    `json:"occur_ms" db:"occur_ms"`                             // 告警产生毫秒数
 	
 	// 通知分类信息

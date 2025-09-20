@@ -548,7 +548,7 @@ func (db *Database) BatchInsertAlarmReportMetricsWithContext(ctx context.Context
 	var rows [][]interface{}
 	for _, metric := range metrics {
 		row := []interface{}{
-			time.Unix(int64(metric.AlarmTimestamp), 0), // 转换为time.Time
+			metric.Timestamp, // 使用消息时间戳
 			metric.SystemID,
 			metric.FlowID,
 			metric.Code,
@@ -628,7 +628,7 @@ func (db *Database) BatchInsertNotificationReportMetricsWithContext(ctx context.
 	var rows [][]interface{}
 	for _, metric := range metrics {
 		row := []interface{}{
-			time.Unix(int64(metric.NotificationTimestamp), 0), // 转换为time.Time
+			metric.Timestamp, // 使用消息时间戳
 			metric.SystemID,
 			metric.FlowID,
 			metric.Code,

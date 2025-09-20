@@ -418,7 +418,9 @@ grep -i "告警\|alarm\|notification" logs/telemetry.log | tail -10
   "alarm_text": "设备温度过高",
   "resource": "/components/component[name=PSU-1]",
   "probable_cause": "cooling-system-failure",
-  "event_time": "2025-09-20T16:29:45Z",
+  "occurrence_time": "2025-09-20T16:29:45Z",  // 告警产生时间(UTC)
+  "update_time": "2025-09-20T16:29:50Z",      // 告警更新时间(UTC)
+  "disappeared_time": null,                    // 告警消失时间(UTC)
   "sequence_number": 12345,
   "additional_info": {
     "temperature": 85.5,
@@ -427,27 +429,75 @@ grep -i "告警\|alarm\|notification" logs/telemetry.log | tail -10
 }
 ```
 
+### 时间字段说明
+- **自动转换**: Proto中的uint32 Unix时间戳自动转换为PostgreSQL TIMESTAMPTZ格式
+- **UTC时间**: 所有时间字段统一使用UTC时区存储
+- **可读格式**: 数据库中存储为 `2025-09-20 16:29:45+00` 格式
+- **查询友好**: 支持时区转换和时间范围查询
+
 ### 告警监控查询
 ```sql
--- 查看最近1小时的告警
-SELECT * FROM telemetry.alarm_reports 
+-- 查看最近1小时的告警（包含可读时间格式）
+SELECT 
+    system_id,
+    flow_id,
+    alarm_type,
+    severity,
+    occurrence_time AT TIME ZONE 'Asia/Shanghai' as occurrence_time_local,
+    update_time AT TIME ZONE 'Asia/Shanghai' as update_time_local,
+    disappeared_time AT TIME ZONE 'Asia/Shanghai' as disappeared_time_local,
+    description
+FROM telemetry.alarm_report 
 WHERE timestamp >= NOW() - INTERVAL '1 hour'
-ORDER BY timestamp DESC;
+ORDER BY occurrence_time DESC;
 
--- 按严重性统计告警数量
-SELECT severity, COUNT(*) as count
-FROM telemetry.alarm_reports 
-WHERE timestamp >= NOW() - INTERVAL '24 hours'
-GROUP BY severity;
+-- 按严重性和时间范围统计告警数量
+SELECT 
+    severity, 
+    COUNT(*) as count,
+    MIN(occurrence_time) as first_occurrence,
+    MAX(occurrence_time) as last_occurrence
+FROM telemetry.alarm_report 
+WHERE occurrence_time >= NOW() - INTERVAL '24 hours'
+GROUP BY severity
+ORDER BY count DESC;
 
--- 查看特定设备的告警趋势
-SELECT DATE_TRUNC('hour', timestamp) as hour, 
-       COUNT(*) as alarm_count
-FROM telemetry.alarm_reports 
+-- 查看特定设备的告警趋势（按小时统计）
+SELECT 
+    DATE_TRUNC('hour', occurrence_time) as hour, 
+    COUNT(*) as alarm_count,
+    COUNT(DISTINCT alarm_type) as unique_alarm_types,
+    array_agg(DISTINCT severity) as severities
+FROM telemetry.alarm_report 
 WHERE system_id = 'GDQY-QYYYJRJ-6180H-SM-A5134'
-  AND timestamp >= NOW() - INTERVAL '7 days'
+  AND occurrence_time >= NOW() - INTERVAL '7 days'
 GROUP BY hour
 ORDER BY hour;
+
+-- 查看活跃告警（未消失的告警）
+SELECT 
+    system_id,
+    flow_id,
+    alarm_type,
+    severity,
+    occurrence_time,
+    update_time,
+    EXTRACT(EPOCH FROM (NOW() - occurrence_time))/3600 as hours_since_occurrence
+FROM telemetry.alarm_report 
+WHERE disappeared_time IS NULL
+ORDER BY occurrence_time DESC;
+
+-- 通知消息查询
+SELECT 
+    system_id,
+    flow_id,
+    classification,
+    severity,
+    occur_time AT TIME ZONE 'Asia/Shanghai' as occur_time_local,
+    description
+FROM telemetry.notification_report 
+WHERE occur_time >= NOW() - INTERVAL '1 hour'
+ORDER BY occur_time DESC;
 ```
 
 ## 📈 性能基准
@@ -484,6 +534,14 @@ ORDER BY hour;
 3. 联系维护者
 
 ## 🔄 更新日志
+
+### v2.1.1 (2025-09-20)
+- ✨ **优化告警时间字段存储格式**
+- 🔧 将Unix时间戳(uint32)转换为可读的TIMESTAMPTZ格式存储
+- 🔧 改进occurrence_time、update_time、disappeared_time和occur_time字段处理
+- 📝 添加数据库时间字段迁移脚本(migrate_alarm_time_fields.sql)
+- 🎯 增强时间数据的可读性和查询便利性
+- ✅ 时间字段现在以UTC格式存储，支持时区查询
 
 ### v2.1.0 (2025-09-20)
 - ✨ **新增告警与通知消息采集功能**
