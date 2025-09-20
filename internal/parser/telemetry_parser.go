@@ -114,12 +114,14 @@ func convertPhyStatus(value int32) string {
 
 // ParseResult 解析结果
 type ParseResult struct {
-	SystemID             string
-	SensorPath           string
-	Timestamp            time.Time
-	PlatformMetrics      []models.PlatformMetric
-	InterfaceMetrics     []models.InterfaceMetric
-	SubinterfaceMetrics  []models.SubinterfaceMetric
+	SystemID                 string
+	SensorPath               string
+	Timestamp                time.Time
+	PlatformMetrics          []models.PlatformMetric
+	InterfaceMetrics         []models.InterfaceMetric
+	SubinterfaceMetrics      []models.SubinterfaceMetric
+	AlarmReportMetrics       []models.AlarmReportMetric
+	NotificationReportMetrics []models.NotificationReportMetric
 }
 
 // TelemetryParser telemetry数据解析器
@@ -142,8 +144,14 @@ func (p *TelemetryParser) ParseTelemetryData(data []byte) (*ParseResult, error) 
 		return nil, fmt.Errorf("解析telemetry消息失败: %v", err)
 	}
 
-	p.logger.Debugf("解析到telemetry消息: system_id=%s, sensor_path=%s", 
-		telemetryMsg.SystemId, telemetryMsg.SensorPath)
+	p.logger.Debugf("解析到telemetry消息: system_id=%s, sensor_path=%s, data_type=%s", 
+		telemetryMsg.SystemId, telemetryMsg.SensorPath, telemetryMsg.DataType.String())
+	
+	// 特别记录所有接收到的sensor_path和data_type
+	if p.logger.Level <= logrus.DebugLevel {
+		p.logger.Debugf("📡 接收到sensor_path: %s, data_type: %s (来自设备: %s)", 
+			telemetryMsg.SensorPath, telemetryMsg.DataType.String(), telemetryMsg.SystemId)
+	}
 
 	result := &ParseResult{
 		SystemID:    telemetryMsg.SystemId,
@@ -151,7 +159,28 @@ func (p *TelemetryParser) ParseTelemetryData(data []byte) (*ParseResult, error) 
 		Timestamp:   time.UnixMilli(int64(telemetryMsg.MsgTimestamp)),
 	}
 
-	// 根据sensor_path路由到不同的解析函数
+	// 首先检查data_type，告警数据优先处理
+	if telemetryMsg.DataType == zteTelemetry.TelemetryDataType_ALARM {
+		p.logger.Debugf("🚨 检测到告警数据类型: device_id=%s, sensor_path=%s, data_size=%d", 
+			telemetryMsg.SystemId, telemetryMsg.SensorPath, len(telemetryMsg.DataGpb))
+		
+		// 告警数据处理
+		alarmMetrics, notificationMetrics, err := p.parseAlarmData(&telemetryMsg)
+		if err != nil {
+			p.logger.WithError(err).Error("解析告警数据失败")
+			return nil, err
+		}
+		
+		result.AlarmReportMetrics = alarmMetrics
+		result.NotificationReportMetrics = notificationMetrics
+		
+		p.logger.Debugf("✅ 成功解析告警数据: alarm_reports=%d, notifications=%d", 
+			len(alarmMetrics), len(notificationMetrics))
+		
+		return result, nil
+	}
+
+	// 根据sensor_path路由到不同的解析函数 (仅处理PM数据)
 	switch {
 	case strings.HasPrefix(telemetryMsg.SensorPath, "oc-platform:components/component/state/memory"):
 		// 组件内存数据 (优先匹配更具体的路径)
@@ -284,6 +313,8 @@ func (p *TelemetryParser) ParseTelemetryData(data []byte) (*ParseResult, error) 
 			return nil, err
 		}
 		result.SubinterfaceMetrics = metrics
+
+
 
 	default:
 		p.logger.Warnf("未知的sensor_path: %s", telemetryMsg.SensorPath)

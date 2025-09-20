@@ -322,6 +322,14 @@ func (db *Database) BatchInsertSubinterfaceMetrics(metrics []models.Subinterface
 	return db.BatchInsertSubinterfaceMetricsWithContext(context.Background(), metrics)
 }
 
+func (db *Database) BatchInsertAlarmReportMetrics(metrics []models.AlarmReportMetric) error {
+	return db.BatchInsertAlarmReportMetricsWithContext(context.Background(), metrics)
+}
+
+func (db *Database) BatchInsertNotificationReportMetrics(metrics []models.NotificationReportMetric) error {
+	return db.BatchInsertNotificationReportMetricsWithContext(context.Background(), metrics)
+}
+
 // 重命名原有方法为带Context的版本 - 修复版本，正确处理nil指针
 func (db *Database) BatchInsertPlatformMetricsWithContext(ctx context.Context, metrics []models.PlatformMetric) error {
 	if len(metrics) == 0 {
@@ -520,6 +528,138 @@ func safeNumericString(s *string) interface{} {
 		return val
 	}
 	// 如果解析失败，返回nil
+	return nil
+}
+
+// BatchInsertAlarmReportMetricsWithContext 批量插入告警上报数据（带Context）
+func (db *Database) BatchInsertAlarmReportMetricsWithContext(ctx context.Context, metrics []models.AlarmReportMetric) error {
+	if len(metrics) == 0 {
+		return nil
+	}
+
+	// 获取连接
+	conn, err := db.pool.Acquire(ctx)
+	if err != nil {
+		return fmt.Errorf("获取数据库连接失败: %v", err)
+	}
+	defer conn.Release()
+
+	// 准备数据
+	var rows [][]interface{}
+	for _, metric := range metrics {
+		row := []interface{}{
+			time.Unix(int64(metric.AlarmTimestamp), 0), // 转换为time.Time
+			metric.SystemID,
+			metric.FlowID,
+			metric.Code,
+			metric.OccurrenceTime,
+			metric.UpdateTime,
+			metric.DisappearedTime,
+			metric.OccurrenceMs,
+			metric.UpdateMs,
+			metric.DisappearedMs,
+			safeString(metric.AlarmClass),
+			safeString(metric.AlarmType),
+			safeString(metric.AlarmStatus),
+			safeUint32(metric.Sort),
+			safeString(metric.Severity),
+			safeUint32(metric.TpidType),
+			safeUint32(metric.TpidLength),
+			safeString(metric.Tpid),
+			safeUint32(metric.ProtectGroupWorkStatus),
+			safeUint32(metric.ProtectType),
+			safeUint32(metric.Reason),
+			safeString(metric.ReturnMode),
+			safeUint32(metric.ProtectTpidType),
+			safeUint32(metric.ProtectTpidLength),
+			safeString(metric.ProtectTpid),
+			safeUint32(metric.SourceTpidType),
+			safeUint32(metric.SourceTpidLength),
+			safeString(metric.SourceTpid),
+			safeUint32(metric.SwitchTpidType),
+			safeUint32(metric.PreviousTpidLength),
+			safeUint32(metric.CurrentTpidLength),
+			safeString(metric.PreviousTpid),
+			safeString(metric.CurrentTpid),
+			safeString(metric.PerfAlarmPeriod),
+			safeString(metric.PerfAlarmType),
+			safeString(metric.PerfAlarmValue),
+			safeString(metric.Description),
+			safeString(metric.Caption),
+		}
+		rows = append(rows, row)
+	}
+
+	// 执行COPY FROM STDIN
+	_, err = conn.Conn().CopyFrom(ctx, pgx.Identifier{"telemetry", "alarm_report"}, 
+		[]string{
+			"timestamp", "system_id", "flow_id", "code", "occurrence_time", "update_time", "disappeared_time",
+			"occurrence_ms", "update_ms", "disappeared_ms", "alarm_class", "alarm_type", "alarm_status",
+			"sort", "severity", "tpid_type", "tpid_length", "tpid", "protect_group_work_status",
+			"protect_type", "reason", "return_mode", "protect_tpid_type", "protect_tpid_length",
+			"protect_tpid", "source_tpid_type", "source_tpid_length", "source_tpid", "switch_tpid_type",
+			"previous_tpid_length", "current_tpid_length", "previous_tpid", "current_tpid",
+			"perf_alarm_period", "perf_alarm_type", "perf_alarm_value", "description", "caption",
+		},
+		pgx.CopyFromRows(rows))
+
+	if err != nil {
+		return fmt.Errorf("COPY FROM STDIN 插入告警上报失败: %v", err)
+	}
+
+	db.logger.Debugf("成功批量插入告警上报 %d 条", len(metrics))
+	return nil
+}
+
+// BatchInsertNotificationReportMetricsWithContext 批量插入通知上报数据（带Context）
+func (db *Database) BatchInsertNotificationReportMetricsWithContext(ctx context.Context, metrics []models.NotificationReportMetric) error {
+	if len(metrics) == 0 {
+		return nil
+	}
+
+	// 获取连接
+	conn, err := db.pool.Acquire(ctx)
+	if err != nil {
+		return fmt.Errorf("获取数据库连接失败: %v", err)
+	}
+	defer conn.Release()
+
+	// 准备数据
+	var rows [][]interface{}
+	for _, metric := range metrics {
+		row := []interface{}{
+			time.Unix(int64(metric.NotificationTimestamp), 0), // 转换为time.Time
+			metric.SystemID,
+			metric.FlowID,
+			metric.Code,
+			metric.OccurTime,
+			metric.OccurMs,
+			safeString(metric.Classification),
+			safeUint32(metric.Sort),
+			safeString(metric.Severity),
+			safeUint32(metric.TpidType),
+			safeUint32(metric.TpidLength),
+			safeString(metric.Tpid),
+			safeString(metric.Description),
+			safeString(metric.Caption),
+		}
+		rows = append(rows, row)
+	}
+
+	// 执行COPY FROM STDIN
+	_, err = conn.Conn().CopyFrom(ctx, pgx.Identifier{"telemetry", "notification_report"}, 
+		[]string{
+			"timestamp", "system_id", "flow_id", "code", "occur_time", "occur_ms",
+			"classification", "sort", "severity", "tpid_type", "tpid_length", "tpid",
+			"description", "caption",
+		},
+		pgx.CopyFromRows(rows))
+
+	if err != nil {
+		return fmt.Errorf("COPY FROM STDIN 插入通知上报失败: %v", err)
+	}
+
+	db.logger.Debugf("成功批量插入通知上报 %d 条", len(metrics))
 	return nil
 }
 

@@ -9,7 +9,8 @@
 - **批量数据写入**: 使用pgx + COPY FROM STDIN，解决PostgreSQL 65535参数限制
 - **实时监控**: 完整的Prometheus指标体系
 - **多设备支持**: 同时处理多台ZTE设备的遥测数据
-- **数据类型支持**: 平台指标、接口指标、子接口指标
+- **全面数据类型支持**: 平台指标、接口指标、子接口指标、**告警数据、通知消息**
+- **智能告警解析**: 支持ZTE设备告警上报和通知消息的实时解析与存储
 
 ### 性能优化
 - **连接池优化**: 200最大连接，25最小连接
@@ -135,6 +136,35 @@ CREATE TABLE subinterface_metrics (
     description TEXT
 );
 
+-- 告警上报表
+CREATE TABLE alarm_reports (
+    timestamp TIMESTAMPTZ NOT NULL,
+    system_id TEXT NOT NULL,
+    flow_id BIGINT NOT NULL,
+    alarm_type TEXT,
+    severity TEXT,
+    alarm_text TEXT,
+    resource TEXT,
+    probable_cause TEXT,
+    event_time TIMESTAMPTZ,
+    sequence_number BIGINT,
+    additional_info JSONB
+);
+
+-- 通知消息表
+CREATE TABLE notification_reports (
+    timestamp TIMESTAMPTZ NOT NULL,
+    system_id TEXT NOT NULL,
+    flow_id BIGINT NOT NULL,
+    notification_type TEXT,
+    severity TEXT,
+    notification_text TEXT,
+    resource TEXT,
+    event_time TIMESTAMPTZ,
+    sequence_number BIGINT,
+    additional_info JSONB
+);
+
 -- 创建索引优化查询性能
 CREATE INDEX idx_platform_timestamp ON platform_metrics(timestamp);
 CREATE INDEX idx_platform_system_id ON platform_metrics(system_id);
@@ -142,6 +172,12 @@ CREATE INDEX idx_interface_timestamp ON interface_metrics(timestamp);
 CREATE INDEX idx_interface_system_id ON interface_metrics(system_id);
 CREATE INDEX idx_subinterface_timestamp ON subinterface_metrics(timestamp);
 CREATE INDEX idx_subinterface_system_id ON subinterface_metrics(system_id);
+CREATE INDEX idx_alarm_timestamp ON alarm_reports(timestamp);
+CREATE INDEX idx_alarm_system_id ON alarm_reports(system_id);
+CREATE INDEX idx_alarm_flow_id ON alarm_reports(flow_id);
+CREATE INDEX idx_notification_timestamp ON notification_reports(timestamp);
+CREATE INDEX idx_notification_system_id ON notification_reports(system_id);
+CREATE INDEX idx_notification_flow_id ON notification_reports(flow_id);
 ```
 
 ### 4. 配置文件
@@ -355,6 +391,63 @@ grep "监控指标\|系统状态" logs/telemetry.log | tail -10
 
 # 查看数据写入统计
 grep "成功写入\|插入.*成功" logs/telemetry.log | tail -10
+
+# 查看告警相关日志
+grep -i "告警\|alarm\|notification" logs/telemetry.log | tail -10
+
+# 调试模式查看详细解析过程
+./bin/telemetry -config config.yaml -debug
+```
+
+## 🚨 告警与通知功能
+
+### 支持的告警类型
+- **设备告警**: 硬件故障、温度异常、电源问题等
+- **接口告警**: 链路状态变化、流量异常等  
+- **系统告警**: CPU/内存使用率、存储空间等
+- **通知消息**: 配置变更、状态更新等
+
+### 告警数据结构
+```json
+{
+  "timestamp": "2025-09-20T16:30:00Z",
+  "system_id": "GDQY-QYYYJRJ-6180H-SM-A5134",
+  "flow_id": 779854,
+  "alarm_type": "device-alarm",
+  "severity": "emergencies",
+  "alarm_text": "设备温度过高",
+  "resource": "/components/component[name=PSU-1]",
+  "probable_cause": "cooling-system-failure",
+  "event_time": "2025-09-20T16:29:45Z",
+  "sequence_number": 12345,
+  "additional_info": {
+    "temperature": 85.5,
+    "threshold": 75.0
+  }
+}
+```
+
+### 告警监控查询
+```sql
+-- 查看最近1小时的告警
+SELECT * FROM telemetry.alarm_reports 
+WHERE timestamp >= NOW() - INTERVAL '1 hour'
+ORDER BY timestamp DESC;
+
+-- 按严重性统计告警数量
+SELECT severity, COUNT(*) as count
+FROM telemetry.alarm_reports 
+WHERE timestamp >= NOW() - INTERVAL '24 hours'
+GROUP BY severity;
+
+-- 查看特定设备的告警趋势
+SELECT DATE_TRUNC('hour', timestamp) as hour, 
+       COUNT(*) as alarm_count
+FROM telemetry.alarm_reports 
+WHERE system_id = 'GDQY-QYYYJRJ-6180H-SM-A5134'
+  AND timestamp >= NOW() - INTERVAL '7 days'
+GROUP BY hour
+ORDER BY hour;
 ```
 
 ## 📈 性能基准
@@ -391,6 +484,16 @@ grep "成功写入\|插入.*成功" logs/telemetry.log | tail -10
 3. 联系维护者
 
 ## 🔄 更新日志
+
+### v2.1.0 (2025-09-20)
+- ✨ **新增告警与通知消息采集功能**
+- ✨ 支持ZTE设备告警上报数据解析与存储
+- ✨ 支持通知消息的实时采集与处理
+- ✨ 智能Proto解析：支持AlarmInfo和CurrentAlarm双重解析策略
+- 🔧 优化日志级别控制：普通模式只记录info日志，debug模式记录详细日志
+- 📊 新增告警相关监控指标和统计功能
+- 🐛 修复告警数据解析失败问题
+- 📝 完善告警数据库表结构和索引
 
 ### v2.0.0 (2025-09-16)
 - ✨ 实现pgx + COPY FROM STDIN高性能写入

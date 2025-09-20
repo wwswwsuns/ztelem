@@ -107,8 +107,14 @@ func (c *SimpleCollector) processPublishArgs(req *proto.PublishArgs) error {
 			return err
 		}
 
-		c.logger.Debugf("解析成功: system_id=%s, sensor_path=%s, platform_metrics=%d, interface_metrics=%d, subinterface_metrics=%d",
-			result.SystemID, result.SensorPath, len(result.PlatformMetrics), len(result.InterfaceMetrics), len(result.SubinterfaceMetrics))
+		c.logger.Debugf("解析成功: system_id=%s, sensor_path=%s, platform_metrics=%d, interface_metrics=%d, subinterface_metrics=%d, alarm_reports=%d, notifications=%d",
+			result.SystemID, result.SensorPath, len(result.PlatformMetrics), len(result.InterfaceMetrics), len(result.SubinterfaceMetrics), len(result.AlarmReportMetrics), len(result.NotificationReportMetrics))
+
+		// 特别记录告警相关的sensor_path
+		if result.SensorPath == "alm:current-alarm-report" || result.SensorPath == "alm:notification-report" {
+			c.logger.Infof("🚨 检测到告警相关数据: sensor_path=%s, system_id=%s, alarm_reports=%d, notifications=%d", 
+				result.SensorPath, result.SystemID, len(result.AlarmReportMetrics), len(result.NotificationReportMetrics))
+		}
 
 		// 添加到缓冲区
 		if len(result.PlatformMetrics) > 0 {
@@ -130,6 +136,24 @@ func (c *SimpleCollector) processPublishArgs(req *proto.PublishArgs) error {
 				c.logger.WithError(err).Error("添加子接口指标数据到缓冲区失败")
 				return fmt.Errorf("添加子接口指标数据到缓冲区失败: %v", err)
 			}
+		}
+
+		if len(result.AlarmReportMetrics) > 0 {
+			c.logger.Infof("🔥 添加 %d 条告警上报数据到缓冲区", len(result.AlarmReportMetrics))
+			if err := c.bufferManager.AddAlarmReportMetrics(result.AlarmReportMetrics); err != nil {
+				c.logger.WithError(err).Error("添加告警上报数据到缓冲区失败")
+				return fmt.Errorf("添加告警上报数据到缓冲区失败: %v", err)
+			}
+			c.logger.Infof("✅ 成功添加告警上报数据到缓冲区")
+		}
+
+		if len(result.NotificationReportMetrics) > 0 {
+			c.logger.Infof("🔔 添加 %d 条通知上报数据到缓冲区", len(result.NotificationReportMetrics))
+			if err := c.bufferManager.AddNotificationReportMetrics(result.NotificationReportMetrics); err != nil {
+				c.logger.WithError(err).Error("添加通知上报数据到缓冲区失败")
+				return fmt.Errorf("添加通知上报数据到缓冲区失败: %v", err)
+			}
+			c.logger.Infof("✅ 成功添加通知上报数据到缓冲区")
 		}
 	}
 

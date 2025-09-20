@@ -1,0 +1,163 @@
+/*************************************************************************************
+ * Copyright (C) 2018-2022  ZTE Corporation.  All rights reserved.                   *
+ *************************************************************************************
+ * Description:                                                                      *
+ *    This proto defines a schema for ALARM (Connectivity Fault Management)            *
+ *                                                                                   *
+ *************************************************************************************
+ * Organization:                                                                     *
+ *   ZTE Corporation                                                                 *
+ *************************************************************************************
+ * Contact:                                                                          *
+ *    ZTE Corporation                                                                *
+ *    Nanjing Institute of ZTE Corporation                                           *
+ "    No.68 Zijinghua Rd. Yuhuatai District, Nanjing, China                          *
+ *    Tel: +86-25-52870000                                                           *
+ *************************************************************************************
+ * version:                                                                          *
+ *    1st edition 2022-12-12                                                         *
+ *************************************************************************************/
+
+syntax = "proto3";
+
+package zte.telemetry.alarm;
+option go_package = "github.com/wwswwsuns/ztelem/proto/zxr10_alarm";
+
+// 告警通知上报消息
+/*********************************************************************************************************************
+ * Description:                                                                                                      *
+ *    The following messages defines for information of ALARM                                                        *
+ *                                                                                                                   *
+ * Subscription info:                                                                                                *
+ *    sensor-path:alm:current-alarm-report                                                                           *
+ *    sensor-path:alm:notification-report                                                                            *
+ *********************************************************************************************************************/
+message AlarmInfo {
+    /* current alarm report */
+    repeated CurrentAlarm alarm_report = 1;               // 当前告警上报信息
+    /* notification report */
+    repeated Notification notification_report = 2;        // 通知上报信息
+}
+
+
+// 当前告警上报消息
+/**********************************************************************************************************************
+ * Description:                                                                                                       *
+ *    The following messages defines for alarm report                                                                 *
+ *                                                                                                                    *
+ * Subscription info:                                                                                                 *
+ *    sensor-path:alm:current-alarm-report                                                                            *
+ **********************************************************************************************************************/
+message CurrentAlarm {
+    /* flow-id. Key filed*/
+    uint32 flow_id = 1;                    // 告警流水号,Key filed
+    /* timestamp. Key filed*/
+    uint32 timestamp = 2;                  // 时间戳，和告警流水号一起唯一确定一条告警,Key filed
+    /* code */
+    uint32 code = 3;                       // 告警码
+    /* occurrence-time */
+    uint32 occurrence_time = 4;            // 告警产生时间，自1970-1-1 00:00:00以来的秒数，UTC时间
+    /* update-time */
+    uint32 update_time = 5;                // 告警更新时间。自1970-1-1 00:00:00以来的秒数，UTC时间
+    /* disappeared-time */
+    uint32 disappeared_time = 6;           // 告警消失时间。自1970-1-1 00:00:00以来的秒数，UTC时间
+    /* occurrence-ms */
+    uint32 occurrence_ms = 7;              // 告警产生毫秒数。当告警状态为产生时有效
+    /* update-ms */
+    uint32 update_ms = 8;                  // 告警更新毫秒数。当告警状态为更新时有效
+    /* disappeared-ms */
+    uint32 disappeared_ms = 9;             // 告警消失毫秒数。当告警状态为消失时有效
+    /* alarm-class */
+    string alarm_class = 10;               // 告警类型
+    /* alarm-type */
+    string alarm_type = 11;                // 告警大类
+    /* alarm-status */
+    string alarm_status = 12;              // 告警状态
+    /* sort */
+    uint32 sort = 13;                      // 告警种类
+    /* severity */
+    string severity = 14;                  // 告警严重性等级
+    /* tpid-type */
+    uint32 tpid_type = 15;                 // 上报告警的检测点类型
+    /* tpid-length */
+    uint32 tpid_length = 16;               // 上报告警的检测点长度
+    /* tpid */
+    bytes tpid = 17;                       // 上报告警的检测点
+    /* protect-group-work-status */
+    uint32 protect_group_work_status = 18; // 保护组工作状态
+    /* protect-type */
+    uint32 protect_type = 19;              // 保护类型
+    /* reason */
+    uint32 reason = 20;                    // 事件原因
+    /* return-mode */
+    string return_mode = 21;               // 倒换事件的返回模式
+    /* protect-tpid-type */
+    uint32 protect_tpid_type = 22;         // 保护检测点类型
+    /* protect-tpid-length */
+    uint32 protect_tpid_length = 23;       // 保护检测点长度
+    /* protect-tpid */
+    bytes protect_tpid = 24;               // 保护检测点，即保护组
+    /* source-tpid-type */
+    uint32 source_tpid_type = 25;          // 告警的来源检测点类型
+    /* source-tpid-length */
+    uint32 source_tpid_length = 26;        // 告警的来源检测点长度
+    /* source-tpid */
+    bytes source_tpid = 27;                // 告警的来源检测点
+    /* swtich-tpid-type */
+    uint32 swtich_tpid_type = 28;          // 被保护的检测点类型
+    /* previous-tpid-length */
+    uint32 previous_tpid_length = 29;      // 倒换前的检测点长度
+    /* current-tpid-length */
+    uint32 current_tpid_length = 30;       // 倒换到的检测点长度
+    /* previous-tpid */
+    bytes previous_tpid = 31;              // 倒换前的检测点
+    /* current-tpid */
+    bytes current_tpid = 32;               // 当前的检测点，即倒换到的检测点
+    /* perf-alarm-period */
+    string perf_alarm_period = 33;         // 表示15（5）分钟还是24小时越限告警
+    /* perf-alarm-type */
+    string perf_alarm_type = 34;           // 性能越限告警类型，如：高门限越限、高预警越限等
+    /* perf-alarm-value */
+    bytes perf_alarm_value = 35;           // 越限告警产生时的性能值，采用10字节的科学计数法
+    /* description */
+    string description = 36;               // 告警描述字符串
+    /* caption */
+    string caption = 37;                   // 告警标题和告警描述一起构成完整的告警说明
+}
+
+// 通知上报消息
+/**********************************************************************************************************************
+ * Description:                                                                                                       *
+ *    The following messages defines for report notification                                                          *
+ *                                                                                                                    *
+ * Subscription info:                                                                                                 *
+ *    sensor-path:alm:notification-report                                                                             *
+ **********************************************************************************************************************/
+message Notification {
+    /* flow-id. Key filed */
+    uint32 flow_id = 1;               // 告警流水号,Key filed
+    /* timestamp. Key filed */
+    uint32 timestamp = 2;             // 时间戳，和告警流水号一起唯一确定一条告警,Key filed
+    /* code */
+    uint32 code = 3;                  // 告警码
+    /* occur-time */
+    uint32 occur_time = 4;            // 告警产生时间，自1970-1-1 00:00:00以来的秒数，UTC时间
+    /* occur-ms */
+    uint32 occur_ms = 5;              // 告警产生毫秒数
+    /* classification */
+    string classification = 6;        // 告警大类
+    /* sort */
+    uint32 sort = 7;                  // 告警种类
+    /* severity */
+    string severity = 8;              // 告警严重性等级
+    /* tpid-type */
+    uint32 tpid_type = 9;             // 上报告警的检测点类型
+    /* tpid-length */
+    uint32 tpid_length = 10;          // 上报告警的检测点长度
+    /* tpid */
+    bytes tpid = 11;                  // 上报告警的检测点
+    /* description */
+    string description = 12;          // 描述字符串
+    /* caption */
+    string caption = 13;              // 通知标题。标题和描述一起构成完整的通知说明
+}

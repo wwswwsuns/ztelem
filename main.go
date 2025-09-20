@@ -142,13 +142,11 @@ func initializeLogger(logConfig config.LoggingConfig, debugMode bool) *logrus.Lo
 	// 设置日志级别
 	if debugMode {
 		log.SetLevel(logrus.DebugLevel)
+		log.Info("启用调试模式，将记录debug级别日志")
 	} else {
-		level, err := logrus.ParseLevel(logConfig.Level)
-		if err != nil {
-			log.SetLevel(logrus.InfoLevel)
-		} else {
-			log.SetLevel(level)
-		}
+		// 普通模式下强制使用info级别，忽略配置文件中的debug设置
+		log.SetLevel(logrus.InfoLevel)
+		log.Info("普通模式，只记录info级别以上的日志")
 	}
 
 	// 设置日志格式
@@ -231,10 +229,12 @@ func startMonitoringService(monConfig config.MonitoringConfig, log *logrus.Logge
 				bufferStats := bufferManager.GetStats()
 				dbStats := db.GetStats()
 				
-				log.Infof("监控指标 - 缓冲区: Platform=%d, Interface=%d, Subinterface=%d, 已处理=%d, 错误=%d", 
+				log.Infof("监控指标 - 缓冲区: Platform=%d, Interface=%d, Subinterface=%d, Alarm=%d, Notification=%d, 已处理=%d, 错误=%d", 
 					bufferStats.PlatformBufferSize, 
 					bufferStats.InterfaceBufferSize, 
 					bufferStats.SubinterfaceBufferSize,
+					bufferStats.AlarmReportBufferSize,
+					bufferStats.NotificationReportBufferSize,
 					bufferStats.TotalRecordsProcessed,
 					bufferStats.TotalErrors)
 				
@@ -258,7 +258,7 @@ func startMonitoringService(monConfig config.MonitoringConfig, log *logrus.Logge
 // checkAlertThresholds 检查告警阈值
 func checkAlertThresholds(log *logrus.Logger, thresholds config.AlertThresholdsConfig, bufferStats buffer.FixedBufferStats, dbStats sql.DBStats) {
 	// 检查缓冲区使用率
-	totalBufferSize := bufferStats.PlatformBufferSize + bufferStats.InterfaceBufferSize + bufferStats.SubinterfaceBufferSize
+	totalBufferSize := bufferStats.PlatformBufferSize + bufferStats.InterfaceBufferSize + bufferStats.SubinterfaceBufferSize + bufferStats.AlarmReportBufferSize + bufferStats.NotificationReportBufferSize
 	if totalBufferSize > 0 {
 		// 这里需要知道最大缓冲区大小来计算百分比
 		// 暂时跳过具体实现
@@ -280,6 +280,8 @@ func updatePrometheusMetrics(prometheusServer *monitoring.PrometheusServer, buff
 	prometheusServer.UpdateBufferSize("platform", float64(bufferStats.PlatformBufferSize))
 	prometheusServer.UpdateBufferSize("interface", float64(bufferStats.InterfaceBufferSize))
 	prometheusServer.UpdateBufferSize("subinterface", float64(bufferStats.SubinterfaceBufferSize))
+	prometheusServer.UpdateBufferSize("alarm_report", float64(bufferStats.AlarmReportBufferSize))
+	prometheusServer.UpdateBufferSize("notification_report", float64(bufferStats.NotificationReportBufferSize))
 	
 	// 更新数据库连接池指标
 	prometheusServer.UpdateDBPoolConnections("open", float64(dbStats.OpenConnections))

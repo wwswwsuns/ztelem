@@ -460,6 +460,94 @@ func FormatPercentage(value float64) string {
 	return fmt.Sprintf("%.2f%%", value)
 }
 
+// AlarmReportMetric 告警上报数据结构
+type AlarmReportMetric struct {
+	Timestamp     time.Time `json:"timestamp" db:"timestamp"`
+	SystemID      string    `json:"system_id" db:"system_id"`
+	
+	// 告警基本信息
+	FlowID           uint32    `json:"flow_id" db:"flow_id"`                       // 告警流水号
+	AlarmTimestamp   uint32    `json:"alarm_timestamp" db:"alarm_timestamp"`       // 告警时间戳
+	Code             uint32    `json:"code" db:"code"`                             // 告警码
+	OccurrenceTime   uint32    `json:"occurrence_time" db:"occurrence_time"`       // 告警产生时间
+	UpdateTime       uint32    `json:"update_time" db:"update_time"`               // 告警更新时间
+	DisappearedTime  uint32    `json:"disappeared_time" db:"disappeared_time"`     // 告警消失时间
+	OccurrenceMs     uint32    `json:"occurrence_ms" db:"occurrence_ms"`           // 告警产生毫秒数
+	UpdateMs         uint32    `json:"update_ms" db:"update_ms"`                   // 告警更新毫秒数
+	DisappearedMs    uint32    `json:"disappeared_ms" db:"disappeared_ms"`         // 告警消失毫秒数
+	
+	// 告警分类信息
+	AlarmClass       *string   `json:"alarm_class,omitempty" db:"alarm_class"`     // 告警类型
+	AlarmType        *string   `json:"alarm_type,omitempty" db:"alarm_type"`       // 告警大类
+	AlarmStatus      *string   `json:"alarm_status,omitempty" db:"alarm_status"`   // 告警状态
+	Sort             *uint32   `json:"sort,omitempty" db:"sort"`                   // 告警种类
+	Severity         *string   `json:"severity,omitempty" db:"severity"`           // 告警严重性等级
+	
+	// 检测点信息
+	TpidType         *uint32   `json:"tpid_type,omitempty" db:"tpid_type"`         // 检测点类型
+	TpidLength       *uint32   `json:"tpid_length,omitempty" db:"tpid_length"`     // 检测点长度
+	Tpid             *string   `json:"tpid,omitempty" db:"tpid"`                   // 检测点(base64编码)
+	
+	// 保护组信息
+	ProtectGroupWorkStatus *uint32 `json:"protect_group_work_status,omitempty" db:"protect_group_work_status"` // 保护组工作状态
+	ProtectType            *uint32 `json:"protect_type,omitempty" db:"protect_type"`                           // 保护类型
+	Reason                 *uint32 `json:"reason,omitempty" db:"reason"`                                       // 事件原因
+	ReturnMode             *string `json:"return_mode,omitempty" db:"return_mode"`                             // 倒换事件的返回模式
+	
+	// 保护检测点信息
+	ProtectTpidType   *uint32 `json:"protect_tpid_type,omitempty" db:"protect_tpid_type"`     // 保护检测点类型
+	ProtectTpidLength *uint32 `json:"protect_tpid_length,omitempty" db:"protect_tpid_length"` // 保护检测点长度
+	ProtectTpid       *string `json:"protect_tpid,omitempty" db:"protect_tpid"`               // 保护检测点(base64编码)
+	
+	// 来源检测点信息
+	SourceTpidType   *uint32 `json:"source_tpid_type,omitempty" db:"source_tpid_type"`     // 来源检测点类型
+	SourceTpidLength *uint32 `json:"source_tpid_length,omitempty" db:"source_tpid_length"` // 来源检测点长度
+	SourceTpid       *string `json:"source_tpid,omitempty" db:"source_tpid"`               // 来源检测点(base64编码)
+	
+	// 倒换检测点信息
+	SwitchTpidType      *uint32 `json:"switch_tpid_type,omitempty" db:"switch_tpid_type"`           // 被保护的检测点类型
+	PreviousTpidLength  *uint32 `json:"previous_tpid_length,omitempty" db:"previous_tpid_length"`   // 倒换前的检测点长度
+	CurrentTpidLength   *uint32 `json:"current_tpid_length,omitempty" db:"current_tpid_length"`     // 倒换到的检测点长度
+	PreviousTpid        *string `json:"previous_tpid,omitempty" db:"previous_tpid"`                 // 倒换前的检测点(base64编码)
+	CurrentTpid         *string `json:"current_tpid,omitempty" db:"current_tpid"`                   // 当前的检测点(base64编码)
+	
+	// 性能告警信息
+	PerfAlarmPeriod *string `json:"perf_alarm_period,omitempty" db:"perf_alarm_period"` // 性能告警周期
+	PerfAlarmType   *string `json:"perf_alarm_type,omitempty" db:"perf_alarm_type"`     // 性能越限告警类型
+	PerfAlarmValue  *string `json:"perf_alarm_value,omitempty" db:"perf_alarm_value"`   // 越限告警产生时的性能值(base64编码)
+	
+	// 描述信息
+	Description *string `json:"description,omitempty" db:"description"` // 告警描述字符串
+	Caption     *string `json:"caption,omitempty" db:"caption"`         // 告警标题
+}
+
+// NotificationReportMetric 通知上报数据结构
+type NotificationReportMetric struct {
+	Timestamp     time.Time `json:"timestamp" db:"timestamp"`
+	SystemID      string    `json:"system_id" db:"system_id"`
+	
+	// 通知基本信息
+	FlowID              uint32    `json:"flow_id" db:"flow_id"`                               // 告警流水号
+	NotificationTimestamp uint32  `json:"notification_timestamp" db:"notification_timestamp"` // 通知时间戳
+	Code                uint32    `json:"code" db:"code"`                                     // 告警码
+	OccurTime           uint32    `json:"occur_time" db:"occur_time"`                         // 告警产生时间
+	OccurMs             uint32    `json:"occur_ms" db:"occur_ms"`                             // 告警产生毫秒数
+	
+	// 通知分类信息
+	Classification *string `json:"classification,omitempty" db:"classification"` // 告警大类
+	Sort           *uint32 `json:"sort,omitempty" db:"sort"`                     // 告警种类
+	Severity       *string `json:"severity,omitempty" db:"severity"`             // 告警严重性等级
+	
+	// 检测点信息
+	TpidType   *uint32 `json:"tpid_type,omitempty" db:"tpid_type"`     // 检测点类型
+	TpidLength *uint32 `json:"tpid_length,omitempty" db:"tpid_length"` // 检测点长度
+	Tpid       *string `json:"tpid,omitempty" db:"tpid"`               // 检测点(base64编码)
+	
+	// 描述信息
+	Description *string `json:"description,omitempty" db:"description"` // 描述字符串
+	Caption     *string `json:"caption,omitempty" db:"caption"`         // 通知标题
+}
+
 // 辅助函数：格式化利用率（从浮点数转换为百分比）
 func FormatUtilization(value float64) string {
 	percentage := value * 100
