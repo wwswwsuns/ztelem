@@ -57,3 +57,6 @@ coverage.xml
 
 # 依赖管理
 vendor/
+
+# 本地测试脚本
+./scripts/*
