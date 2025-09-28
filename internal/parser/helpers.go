@@ -222,6 +222,18 @@ func float64Ptr(v float64) *float64 {
 	return &v
 }
 
+// opticalPowerPtr 专门处理光功率数据的指针转换
+// 对于光功率：0.0是有效值，应该保留；无效值用-60表示无光信号
+func opticalPowerPtr(v float64, isValid bool) *float64 {
+	if !isValid {
+		// 无效或缺失的光功率数据，返回-60表示无光信号
+		invalidValue := -60.0
+		return &invalidValue
+	}
+	// 有效的光功率数据，包括0.0，都应该保留
+	return &v
+}
+
 func boolPtr(v bool) *bool {
 	return &v
 }

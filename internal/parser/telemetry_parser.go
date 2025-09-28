@@ -497,10 +497,14 @@ func (p *TelemetryParser) parseComponentsData(msg *zteTelemetry.Telemetry) ([]mo
 		// 解析光模块信息
 		if opticalInfo := componentInfo.GetOpticalInfo(); opticalInfo != nil {
 			if inPower := opticalInfo.GetInPower(); inPower != nil {
-				metric.OpticalInPower = float64Ptr(float64(inPower.GetInstant()))
+				metric.OpticalInPower = opticalPowerPtr(float64(inPower.GetInstant()), true)
+			} else {
+				metric.OpticalInPower = opticalPowerPtr(0, false) // 无光功率数据，设为-60
 			}
 			if outPower := opticalInfo.GetOutPower(); outPower != nil {
-				metric.OpticalOutPower = float64Ptr(float64(outPower.GetInstant()))
+				metric.OpticalOutPower = opticalPowerPtr(float64(outPower.GetInstant()), true)
+			} else {
+				metric.OpticalOutPower = opticalPowerPtr(0, false) // 无光功率数据，设为-60
 			}
 			if biasCurrent := opticalInfo.GetBiasCurrent(); biasCurrent != nil {
 				metric.OpticalBiasCurrent = float64Ptr(float64(biasCurrent.GetInstant()))
@@ -524,10 +528,14 @@ func (p *TelemetryParser) parseComponentsData(msg *zteTelemetry.Telemetry) ([]mo
 					metric.OpticalAlarmLosInfoEventInterval = uint32Ptr(losInfo.GetEventInterval())
 					
 					if len(losInfo.GetOptInPower()) > 0 {
-						metric.OpticalAlarmLosInfoInPower = float64Ptr(float64(losInfo.GetOptInPower()[0].GetInstant()))
+						metric.OpticalAlarmLosInfoInPower = opticalPowerPtr(float64(losInfo.GetOptInPower()[0].GetInstant()), true)
+					} else {
+						metric.OpticalAlarmLosInfoInPower = opticalPowerPtr(0, false) // 无光功率数据，设为-60
 					}
 					if len(losInfo.GetOptOutPower()) > 0 {
-						metric.OpticalAlarmLosInfoOutPower = float64Ptr(float64(losInfo.GetOptOutPower()[0].GetInstant()))
+						metric.OpticalAlarmLosInfoOutPower = opticalPowerPtr(float64(losInfo.GetOptOutPower()[0].GetInstant()), true)
+					} else {
+						metric.OpticalAlarmLosInfoOutPower = opticalPowerPtr(0, false) // 无光功率数据，设为-60
 					}
 				}
 			}
@@ -864,10 +872,14 @@ func (p *TelemetryParser) parseComponentTransceiverState(msg *zteTelemetry.Telem
 			}
 
 			if inPower := opticalInfo.GetInPower(); inPower != nil {
-				metric.OpticalInPower = float64Ptr(float64(inPower.GetInstant()))
+				metric.OpticalInPower = opticalPowerPtr(float64(inPower.GetInstant()), true)
+			} else {
+				metric.OpticalInPower = opticalPowerPtr(0, false) // 无光功率数据，设为-60
 			}
 			if outPower := opticalInfo.GetOutPower(); outPower != nil {
-				metric.OpticalOutPower = float64Ptr(float64(outPower.GetInstant()))
+				metric.OpticalOutPower = opticalPowerPtr(float64(outPower.GetInstant()), true)
+			} else {
+				metric.OpticalOutPower = opticalPowerPtr(0, false) // 无光功率数据，设为-60
 			}
 			if biasCurrent := opticalInfo.GetBiasCurrent(); biasCurrent != nil {
 				metric.OpticalBiasCurrent = float64Ptr(float64(biasCurrent.GetInstant()))
@@ -892,10 +904,14 @@ func (p *TelemetryParser) parseComponentTransceiverState(msg *zteTelemetry.Telem
 					metric.OpticalAlarmLosInfoEventInterval = uint32Ptr(alarmInfo.GetEventInterval())
 					
 					if inPowers := alarmInfo.GetOptInPower(); len(inPowers) > 0 {
-						metric.OpticalAlarmLosInfoInPower = float64Ptr(float64(inPowers[0].GetInstant()))
+						metric.OpticalAlarmLosInfoInPower = opticalPowerPtr(float64(inPowers[0].GetInstant()), true)
+					} else {
+						metric.OpticalAlarmLosInfoInPower = opticalPowerPtr(0, false) // 无光功率数据，设为-60
 					}
 					if outPowers := alarmInfo.GetOptOutPower(); len(outPowers) > 0 {
-						metric.OpticalAlarmLosInfoOutPower = float64Ptr(float64(outPowers[0].GetInstant()))
+						metric.OpticalAlarmLosInfoOutPower = opticalPowerPtr(float64(outPowers[0].GetInstant()), true)
+					} else {
+						metric.OpticalAlarmLosInfoOutPower = opticalPowerPtr(0, false) // 无光功率数据，设为-60
 					}
 				}
 			}

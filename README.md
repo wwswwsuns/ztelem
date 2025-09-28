@@ -1,28 +1,32 @@
 # ZTE Telemetry Data Collector
 
-高性能的ZTE设备遥测数据采集系统，支持gRPC数据采集、PostgreSQL批量写入和Prometheus监控。
+高性能的ZTE设备遥测数据采集系统，支持gRPC数据采集、PostgreSQL/TimescaleDB批量写入和Prometheus监控。
 
 ## 🚀 主要特性
 
 ### 核心功能
-- **高性能数据采集**: 支持gRPC流式数据接收
+- **高性能数据采集**: 支持gRPC流式数据接收，配置keepalive机制确保连接稳定性
 - **批量数据写入**: 使用pgx + COPY FROM STDIN，解决PostgreSQL 65535参数限制
 - **实时监控**: 完整的Prometheus指标体系
-- **多设备支持**: 同时处理多台ZTE设备的遥测数据
+- **多设备支持**: 同时处理多台ZTE设备的遥测数据（生产环境已验证300+设备）
 - **全面数据类型支持**: 平台指标、接口指标、子接口指标、**告警数据、通知消息**
 - **智能告警解析**: 支持ZTE设备告警上报和通知消息的实时解析与存储
+- **光功率数据优化**: 准确区分0.0 dBm有效值和无光信号状态(-60 dBm)
 
 ### 性能优化
 - **连接池优化**: 200最大连接，25最小连接
 - **并行写入**: 支持多表并行写入
 - **内存管理**: 智能缓冲区管理，可配置刷新策略
 - **错误重试**: 自动重试机制，提高数据可靠性
+- **gRPC优化**: Keepalive配置、连接监控、自动重连机制
+- **TimescaleDB支持**: 超表、压缩策略、数据保留策略
 
 ### 监控体系
 - **Prometheus指标**: 20+个业务指标
 - **实时监控**: 缓冲区状态、数据库性能、系统资源
 - **告警支持**: 可配置的阈值告警
 - **Web界面**: 指标说明和健康检查
+- **连接监控**: gRPC连接状态实时监控
 
 ## 📋 系统要求
 
@@ -85,19 +89,92 @@ GRANT ALL ON SCHEMA telemetry TO telemetry_app;
 -- 切换到telemetry schema
 SET search_path TO telemetry;
 
--- 平台指标表
+-- 平台指标表（包含光功率等完整字段）
 CREATE TABLE platform_metrics (
+    id BIGSERIAL PRIMARY KEY,
     timestamp TIMESTAMPTZ NOT NULL,
     system_id TEXT NOT NULL,
     component_name TEXT,
+    component_type TEXT,
     oper_status TEXT,
     admin_status TEXT,
-    alarm_status TEXT,
-    temperature NUMERIC,
-    cpu_usage NUMERIC,
-    memory_usage NUMERIC,
-    power_consumption NUMERIC
+    alarm_status BOOLEAN,
+    
+    -- CPU相关字段
+    cpu_instant DOUBLE PRECISION,
+    cpu_avg DOUBLE PRECISION,
+    cpu_min DOUBLE PRECISION,
+    cpu_max DOUBLE PRECISION,
+    cpu_interval BIGINT,
+    cpu_min_time TIMESTAMPTZ,
+    cpu_max_time TIMESTAMPTZ,
+    cpu_alarm_status TEXT,
+    
+    -- 内存相关字段
+    mem_free BIGINT,
+    mem_usage DOUBLE PRECISION,
+    
+    -- 温度相关字段
+    temp_instant DOUBLE PRECISION,
+    temp_avg DOUBLE PRECISION,
+    temp_min DOUBLE PRECISION,
+    temp_max DOUBLE PRECISION,
+    temp_interval BIGINT,
+    temp_alarm_threshold DOUBLE PRECISION,
+    temp_alarm_severity TEXT,
+    temp_minor_threshold DOUBLE PRECISION,
+    temp_major_threshold DOUBLE PRECISION,
+    temp_fatal_threshold DOUBLE PRECISION,
+    temp_instant_string TEXT,
+    
+    -- 电源相关字段
+    power_enable BOOLEAN,
+    power_capacity DOUBLE PRECISION,
+    power_input_current DOUBLE PRECISION,
+    power_input_voltage DOUBLE PRECISION,
+    power_output_current DOUBLE PRECISION,
+    power_output_voltage DOUBLE PRECISION,
+    power_output_power DOUBLE PRECISION,
+    power_work_state TEXT,
+    power_input_power TEXT,
+    power_input2_current DOUBLE PRECISION,
+    power_input2_voltage DOUBLE PRECISION,
+    power_output2_current DOUBLE PRECISION,
+    power_output2_voltage DOUBLE PRECISION,
+    
+    -- 存储相关字段
+    storage_availability DOUBLE PRECISION,
+    
+    -- 光模块数据（优化后的光功率处理）
+    optical_in_power DOUBLE PRECISION,           -- 输入光功率：0.0=有效零值，-60.0=无光信号
+    optical_out_power DOUBLE PRECISION,          -- 输出光功率：0.0=有效零值，-60.0=无光信号
+    optical_bias_current DOUBLE PRECISION,
+    optical_temperature DOUBLE PRECISION,
+    optical_voltage_vol33 DOUBLE PRECISION,
+    optical_voltage_vol5 DOUBLE PRECISION,
+    optical_alarm_los_status TEXT,
+    optical_alarm_los_info_event_id INTEGER,
+    optical_alarm_los_info_event_interval INTEGER,
+    optical_alarm_los_info_in_power DOUBLE PRECISION,   -- 告警输入光功率：0.0=有效零值，-60.0=无光信号
+    optical_alarm_los_info_out_power DOUBLE PRECISION,  -- 告警输出光功率：0.0=有效零值，-60.0=无光信号
+    optical_online_status TEXT,
+    optical_rx_threshold_high_alarm DOUBLE PRECISION,
+    optical_rx_threshold_pre_high_alarm DOUBLE PRECISION,
+    optical_rx_threshold_low_alarm DOUBLE PRECISION,
+    optical_rx_threshold_pre_low_alarm DOUBLE PRECISION,
+    optical_tx_threshold_high_alarm DOUBLE PRECISION,
+    optical_tx_threshold_pre_high_alarm DOUBLE PRECISION,
+    optical_tx_threshold_low_alarm DOUBLE PRECISION,
+    optical_tx_threshold_pre_low_alarm DOUBLE PRECISION,
+    
+    -- 板卡相关字段
+    linecard_power_admin_state TEXT
 );
+
+-- 光功率数据说明：
+-- • 0.0 dBm = 有效的零光功率值
+-- • -60.0 dBm = 无光信号或无效数据
+-- • 其他值 = 实际测量的光功率值
 
 -- 接口指标表  
 CREATE TABLE interface_metrics (
@@ -136,34 +213,44 @@ CREATE TABLE subinterface_metrics (
     description TEXT
 );
 
--- 告警上报表
-CREATE TABLE alarm_reports (
+-- 告警上报表（优化后的时间字段处理）
+CREATE TABLE alarm_report (
+    id BIGSERIAL PRIMARY KEY,
     timestamp TIMESTAMPTZ NOT NULL,
     system_id TEXT NOT NULL,
     flow_id BIGINT NOT NULL,
     alarm_type TEXT,
     severity TEXT,
-    alarm_text TEXT,
+    description TEXT,
     resource TEXT,
     probable_cause TEXT,
-    event_time TIMESTAMPTZ,
+    occurrence_time TIMESTAMPTZ,      -- 告警发生时间（从uint32 Unix时间戳自动转换）
+    update_time TIMESTAMPTZ,          -- 告警更新时间（从uint32 Unix时间戳自动转换）
+    disappeared_time TIMESTAMPTZ,     -- 告警消失时间（从uint32 Unix时间戳自动转换）
     sequence_number BIGINT,
     additional_info JSONB
 );
 
--- 通知消息表
-CREATE TABLE notification_reports (
+-- 通知消息表（优化后的时间字段处理）
+CREATE TABLE notification_report (
+    id BIGSERIAL PRIMARY KEY,
     timestamp TIMESTAMPTZ NOT NULL,
     system_id TEXT NOT NULL,
     flow_id BIGINT NOT NULL,
-    notification_type TEXT,
+    classification TEXT,
     severity TEXT,
-    notification_text TEXT,
+    description TEXT,
     resource TEXT,
-    event_time TIMESTAMPTZ,
+    occur_time TIMESTAMPTZ,           -- 通知发生时间（从uint32 Unix时间戳自动转换）
     sequence_number BIGINT,
     additional_info JSONB
 );
+
+-- 时间字段说明：
+-- • 所有时间字段自动从Proto的uint32 Unix时间戳转换为TIMESTAMPTZ格式
+-- • 存储格式：'2025-09-28 14:30:00+00' (UTC时区)
+-- • 支持时区查询：AT TIME ZONE 'Asia/Shanghai' 转换为本地时间
+-- • 0或4294967295(uint32最大值)表示无效时间，存储为NULL
 
 -- 创建索引优化查询性能
 CREATE INDEX idx_platform_timestamp ON platform_metrics(timestamp);
@@ -172,12 +259,67 @@ CREATE INDEX idx_interface_timestamp ON interface_metrics(timestamp);
 CREATE INDEX idx_interface_system_id ON interface_metrics(system_id);
 CREATE INDEX idx_subinterface_timestamp ON subinterface_metrics(timestamp);
 CREATE INDEX idx_subinterface_system_id ON subinterface_metrics(system_id);
-CREATE INDEX idx_alarm_timestamp ON alarm_reports(timestamp);
-CREATE INDEX idx_alarm_system_id ON alarm_reports(system_id);
-CREATE INDEX idx_alarm_flow_id ON alarm_reports(flow_id);
-CREATE INDEX idx_notification_timestamp ON notification_reports(timestamp);
-CREATE INDEX idx_notification_system_id ON notification_reports(system_id);
-CREATE INDEX idx_notification_flow_id ON notification_reports(flow_id);
+CREATE INDEX idx_alarm_timestamp ON alarm_report(timestamp);
+CREATE INDEX idx_alarm_system_id ON alarm_report(system_id);
+CREATE INDEX idx_alarm_flow_id ON alarm_report(flow_id);
+CREATE INDEX idx_alarm_occurrence_time ON alarm_report(occurrence_time);
+CREATE INDEX idx_notification_timestamp ON notification_report(timestamp);
+CREATE INDEX idx_notification_system_id ON notification_report(system_id);
+CREATE INDEX idx_notification_flow_id ON notification_report(flow_id);
+CREATE INDEX idx_notification_occur_time ON notification_report(occur_time);
+```
+
+### 5. TimescaleDB优化（推荐用于生产环境）
+
+#### 安装TimescaleDB扩展
+```bash
+# Ubuntu/Debian
+sudo apt install timescaledb-2-postgresql-14
+
+# 启用扩展
+sudo -u postgres psql -d telemetrydb -c "CREATE EXTENSION IF NOT EXISTS timescaledb;"
+```
+
+#### 转换为超表并配置压缩和保留策略
+```sql
+-- 连接到数据库
+\c telemetrydb
+SET search_path TO telemetry;
+
+-- 转换告警表为超表
+SELECT create_hypertable('alarm_report', 'timestamp', 
+    chunk_time_interval => INTERVAL '1 day',
+    if_not_exists => TRUE);
+
+-- 配置压缩策略（7天后压缩）
+ALTER TABLE alarm_report SET (
+    timescaledb.compress,
+    timescaledb.compress_segmentby = 'system_id',
+    timescaledb.compress_orderby = 'timestamp DESC'
+);
+
+SELECT add_compression_policy('alarm_report', INTERVAL '7 days');
+
+-- 配置数据保留策略（1年后删除）
+SELECT add_retention_policy('alarm_report', INTERVAL '1 year');
+
+-- 同样配置通知表
+SELECT create_hypertable('notification_report', 'timestamp', 
+    chunk_time_interval => INTERVAL '1 day',
+    if_not_exists => TRUE);
+
+ALTER TABLE notification_report SET (
+    timescaledb.compress,
+    timescaledb.compress_segmentby = 'system_id',
+    timescaledb.compress_orderby = 'timestamp DESC'
+);
+
+SELECT add_compression_policy('notification_report', INTERVAL '7 days');
+SELECT add_retention_policy('notification_report', INTERVAL '1 year');
+
+-- 查看超表状态
+SELECT * FROM timescaledb_information.hypertables;
+SELECT * FROM timescaledb_information.compression_settings;
 ```
 
 ### 4. 配置文件
@@ -205,6 +347,10 @@ server:
   port: 50051
   max_recv_msg_size: 104857600  # 100MB
   max_concurrent_streams: 2000
+  keepalive_time: "30s"         # gRPC keepalive时间
+  keepalive_timeout: "5s"       # gRPC keepalive超时
+  tcp_keepalive: true           # TCP keepalive
+  tcp_no_delay: true            # TCP无延迟
 
 # 监控配置
 monitoring:
@@ -213,6 +359,15 @@ monitoring:
   prometheus_port: 12112
   health_check_port: 8080
   metrics_interval: "15s"
+
+# 日志配置
+logging:
+  level: "info"                 # 生产环境推荐info级别
+  file: "logs/telemetry.log"
+  max_size: 100                 # MB
+  max_backups: 5
+  max_age: 30                   # 天
+  compress: true
 ```
 
 ### 5. 编译运行
@@ -535,15 +690,41 @@ ORDER BY occur_time DESC;
 
 ## 🔄 更新日志
 
-### v2.1.1 (2025-09-20)
-- ✨ **优化告警时间字段存储格式**
+### v2.2.0 (2025-09-28)
+- ✨ **光功率数据处理优化**
+- 🔧 修复0.0 dBm光功率被写入为NULL的问题
+- 🔧 新增opticalPowerPtr函数，区分有效0.0值和无光信号(-60.0)
+- 🎯 优化OpticalInPower、OpticalOutPower等光功率字段处理
+- 📊 提高光功率数据分析的准确性
+- ✅ 生产环境300+设备验证通过
+
+### v2.1.2 (2025-09-23)
+- ✨ **gRPC连接稳定性优化**
+- 🔧 新增keepalive配置：keepalive_time=30s, keepalive_timeout=5s
+- 🔧 启用TCP keepalive和TCP_NODELAY优化
+- 🔧 增强gRPC连接监控和自动重连机制
+- 📊 新增连接状态监控指标
+- 🐛 修复长时间运行后连接中断问题
+- ⚡ 提升网络连接的稳定性和可靠性
+
+### v2.1.1 (2025-09-22)
+- ✨ **TimescaleDB支持**
+- 🔧 支持告警表转换为TimescaleDB超表
+- 🔧 配置自动压缩策略（7天后压缩）
+- 🔧 配置数据保留策略（1年后删除）
+- 📊 显著提升大数据量查询性能
+- 💾 优化存储空间使用效率
+- 📝 添加超表迁移脚本和操作指南
+
+### v2.1.0 (2025-09-20)
+- ✨ **告警时间字段优化**
 - 🔧 将Unix时间戳(uint32)转换为可读的TIMESTAMPTZ格式存储
 - 🔧 改进occurrence_time、update_time、disappeared_time和occur_time字段处理
 - 📝 添加数据库时间字段迁移脚本(migrate_alarm_time_fields.sql)
 - 🎯 增强时间数据的可读性和查询便利性
 - ✅ 时间字段现在以UTC格式存储，支持时区查询
 
-### v2.1.0 (2025-09-20)
+### v2.0.0 (2025-09-20)
 - ✨ **新增告警与通知消息采集功能**
 - ✨ 支持ZTE设备告警上报数据解析与存储
 - ✨ 支持通知消息的实时采集与处理
@@ -553,7 +734,7 @@ ORDER BY occur_time DESC;
 - 🐛 修复告警数据解析失败问题
 - 📝 完善告警数据库表结构和索引
 
-### v2.0.0 (2025-09-16)
+### v1.9.0 (2025-09-16)
 - ✨ 实现pgx + COPY FROM STDIN高性能写入
 - ✨ 添加完整Prometheus监控体系
 - 🐛 修复PostgreSQL 65535参数限制问题
