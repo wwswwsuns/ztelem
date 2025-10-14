@@ -1,0 +1,7 @@
+[Unit]
+Description=Telemetry zombie connection watchdog
+Wants=telemetry.service
+
+[Service]
+Type=oneshot
+ExecStart=/home/telemetry/scripts/telemetry-zombie-check.sh

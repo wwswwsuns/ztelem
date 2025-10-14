@@ -1,0 +1,10 @@
+[Unit]
+Description=Run telemetry zombie watchdog every minute
+
+[Timer]
+OnUnitActiveSec=60s
+OnBootSec=1min
+Unit=telemetry-zombie-watch.service
+
+[Install]
+WantedBy=timers.target

@@ -72,11 +72,11 @@ func main() {
 	)
 
 	// 创建采集器
-	telemetryCollector := collector.NewSimpleCollector(log, bufferManager)
+	telemetryCollector := collector.NewSimpleCollector(log, bufferManager, cfg.Server)
 
 	// 启动监控服务（如果启用）
 	if cfg.Monitoring.Enabled {
-		startMonitoringService(cfg.Monitoring, log, bufferManager, db)
+		startMonitoringService(cfg.Monitoring, log, bufferManager, db, telemetryCollector)
 	}
 
 	// 优雅关闭处理
@@ -100,7 +100,7 @@ func main() {
 	}()
 
 	// 启动定期状态报告
-	go startStatusReporter(log, bufferManager, db, cfg.Monitoring.MetricsInterval)
+	go startStatusReporter(log, bufferManager, db, telemetryCollector, cfg.Monitoring.MetricsInterval)
 
 	// 等待关闭信号
 	<-sigChan
@@ -202,7 +202,7 @@ func printConfigSummary(log *logrus.Logger, cfg *config.Config) {
 }
 
 // startMonitoringService 启动监控服务
-func startMonitoringService(monConfig config.MonitoringConfig, log *logrus.Logger, bufferManager *buffer.FixedBufferManager, db *database.Database) *monitoring.PrometheusServer {
+func startMonitoringService(monConfig config.MonitoringConfig, log *logrus.Logger, bufferManager *buffer.FixedBufferManager, db *database.Database, collector *collector.SimpleCollector) *monitoring.PrometheusServer {
 	log.Infof("启动监控服务，健康检查端口: %d", monConfig.HealthCheckPort)
 	
 	// 启动Prometheus指标服务器（如果启用）
@@ -228,6 +228,7 @@ func startMonitoringService(monConfig config.MonitoringConfig, log *logrus.Logge
 				// 获取缓冲区统计信息
 				bufferStats := bufferManager.GetStats()
 				dbStats := db.GetStats()
+				connStats := collector.GetConnectionStats()
 				
 				log.Infof("监控指标 - 缓冲区: Platform=%d, Interface=%d, Subinterface=%d, Alarm=%d, Notification=%d, 已处理=%d, 错误=%d", 
 					bufferStats.PlatformBufferSize, 
@@ -241,13 +242,17 @@ func startMonitoringService(monConfig config.MonitoringConfig, log *logrus.Logge
 				log.Infof("监控指标 - 数据库连接: Open=%d, InUse=%d, Idle=%d", 
 					dbStats.OpenConnections, dbStats.InUse, dbStats.Idle)
 				
+				log.Infof("监控指标 - gRPC连接: 总连接=%v, 活跃连接=%v, 僵尸连接=%v, 总数据=%v", 
+					connStats["total_connections"], connStats["active_connections"], 
+					connStats["stale_connections"], connStats["total_data_count"])
+				
 				// 更新Prometheus指标
 				if prometheusServer != nil {
-					updatePrometheusMetrics(prometheusServer, bufferStats, dbStats)
+					updatePrometheusMetrics(prometheusServer, bufferStats, dbStats, connStats, collector)
 				}
 				
 				// 检查告警阈值
-				checkAlertThresholds(log, monConfig.AlertThresholds, bufferStats, dbStats)
+				checkAlertThresholds(log, monConfig.AlertThresholds, bufferStats, dbStats, connStats)
 			}
 		}
 	}()
@@ -256,7 +261,7 @@ func startMonitoringService(monConfig config.MonitoringConfig, log *logrus.Logge
 }
 
 // checkAlertThresholds 检查告警阈值
-func checkAlertThresholds(log *logrus.Logger, thresholds config.AlertThresholdsConfig, bufferStats buffer.FixedBufferStats, dbStats sql.DBStats) {
+func checkAlertThresholds(log *logrus.Logger, thresholds config.AlertThresholdsConfig, bufferStats buffer.FixedBufferStats, dbStats sql.DBStats, connStats map[string]interface{}) {
 	// 检查缓冲区使用率
 	totalBufferSize := bufferStats.PlatformBufferSize + bufferStats.InterfaceBufferSize + bufferStats.SubinterfaceBufferSize + bufferStats.AlarmReportBufferSize + bufferStats.NotificationReportBufferSize
 	if totalBufferSize > 0 {
@@ -272,10 +277,21 @@ func checkAlertThresholds(log *logrus.Logger, thresholds config.AlertThresholdsC
 				connectionUsagePercent, thresholds.DBConnectionUsagePercent)
 		}
 	}
+	
+	// 检查gRPC连接健康状态
+	if totalConn, ok := connStats["total_connections"].(int); ok && totalConn > 0 {
+		if staleConn, ok := connStats["stale_connections"].(int); ok {
+			stalePercent := (staleConn * 100) / totalConn
+			if stalePercent >= 30 { // 如果30%以上连接为僵尸连接，发出告警
+				log.Warnf("gRPC僵尸连接告警: %d%% (%d/%d) 连接无数据传输", 
+					stalePercent, staleConn, totalConn)
+			}
+		}
+	}
 }
 
 // updatePrometheusMetrics 更新Prometheus指标
-func updatePrometheusMetrics(prometheusServer *monitoring.PrometheusServer, bufferStats buffer.FixedBufferStats, dbStats sql.DBStats) {
+func updatePrometheusMetrics(prometheusServer *monitoring.PrometheusServer, bufferStats buffer.FixedBufferStats, dbStats sql.DBStats, connStats map[string]interface{}, collector *collector.SimpleCollector) {
 	// 更新缓冲区指标
 	prometheusServer.UpdateBufferSize("platform", float64(bufferStats.PlatformBufferSize))
 	prometheusServer.UpdateBufferSize("interface", float64(bufferStats.InterfaceBufferSize))
@@ -302,10 +318,35 @@ func updatePrometheusMetrics(prometheusServer *monitoring.PrometheusServer, buff
 	// 更新处理统计
 	prometheusServer.UpdateProcessedRecords("total", float64(bufferStats.TotalRecordsProcessed))
 	prometheusServer.UpdateProcessedRecords("errors", float64(bufferStats.TotalErrors))
+	
+	// 更新gRPC连接指标
+	if totalConn, ok := connStats["total_connections"].(int); ok {
+		prometheusServer.UpdateGRPCConnections("total", float64(totalConn))
+	}
+	if activeConn, ok := connStats["active_connections"].(int); ok {
+		prometheusServer.UpdateGRPCConnections("active", float64(activeConn))
+	}
+	if staleConn, ok := connStats["stale_connections"].(int); ok {
+		prometheusServer.UpdateGRPCConnections("stale", float64(staleConn))
+	}
+	
+	// 更新连接详细信息
+	prometheusServer.ClearGRPCConnectionInfo()
+	connectionDetails := collector.GetConnectionDetails()
+	for _, conn := range connectionDetails {
+		prometheusServer.UpdateGRPCConnectionInfo(
+			conn["remote_addr"].(string),
+			conn["connection_id"].(string),
+			conn["status"].(string),
+			conn["connected_duration"].(string),
+			conn["last_data_age"].(string),
+			1.0,
+		)
+	}
 }
 
 // startStatusReporter 启动状态报告器
-func startStatusReporter(log *logrus.Logger, bufferManager *buffer.FixedBufferManager, db *database.Database, interval time.Duration) {
+func startStatusReporter(log *logrus.Logger, bufferManager *buffer.FixedBufferManager, db *database.Database, collector *collector.SimpleCollector, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	
@@ -318,14 +359,15 @@ func startStatusReporter(log *logrus.Logger, bufferManager *buffer.FixedBufferMa
 			
 			bufferStats := bufferManager.GetStats()
 			dbStats := db.GetStats()
+			connStats := collector.GetConnectionStats()
 			
 			log.Infof("系统状态 - 内存: Alloc=%dMB, Sys=%dMB, NumGC=%d", 
 				m.Alloc/(1024*1024), m.Sys/(1024*1024), m.NumGC)
 			
-			log.Infof("系统状态 - Goroutines=%d, 缓冲区总大小=%d, 数据库连接=%d/%d", 
+			log.Infof("系统状态 - Goroutines=%d, 缓冲区总大小=%d, 数据库连接=%d/%d, gRPC连接=%v", 
 				runtime.NumGoroutine(),
 				bufferStats.PlatformBufferSize + bufferStats.InterfaceBufferSize + bufferStats.SubinterfaceBufferSize,
-				dbStats.InUse, dbStats.OpenConnections)
+				dbStats.InUse, dbStats.OpenConnections, connStats["total_connections"])
 		}
 	}
 }

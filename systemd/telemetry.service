@@ -1,0 +1,14 @@
+[Unit]
+Description=Telemetry Service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/telemetry
+ExecStart=/home/telemetry/bin/telemetry -config default.yaml
+Restart=always
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

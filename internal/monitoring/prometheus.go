@@ -29,6 +29,8 @@ type PrometheusServer struct {
 	bufferFlushes       *prometheus.CounterVec
 	systemMemory        *prometheus.GaugeVec
 	systemGoroutines    prometheus.Gauge
+	grpcConnections     *prometheus.GaugeVec
+	grpcConnectionInfo  *prometheus.GaugeVec
 }
 
 // NewPrometheusServer 创建Prometheus指标服务器
@@ -131,6 +133,22 @@ func NewPrometheusServer(port int, logger *logrus.Logger) *PrometheusServer {
 		},
 	)
 
+	grpcConnections := prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "telemetry_grpc_connections",
+			Help: "gRPC连接状态",
+		},
+		[]string{"state"}, // total, active, stale
+	)
+
+	grpcConnectionInfo := prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "telemetry_grpc_connection_info",
+			Help: "gRPC连接详细信息",
+		},
+		[]string{"remote_addr", "connection_id", "status", "connected_duration", "last_data_age"}, // 连接详细标签
+	)
+
 	// 注册所有指标
 	prometheus.MustRegister(
 		dbWriteDuration,
@@ -145,6 +163,8 @@ func NewPrometheusServer(port int, logger *logrus.Logger) *PrometheusServer {
 		bufferFlushes,
 		systemMemory,
 		systemGoroutines,
+		grpcConnections,
+		grpcConnectionInfo,
 	)
 
 	mux := http.NewServeMux()
@@ -228,6 +248,8 @@ telemetry_db_pool_connections{state="acquired"} / telemetry_db_pool_connections{
 		bufferFlushes:       bufferFlushes,
 		systemMemory:        systemMemory,
 		systemGoroutines:    systemGoroutines,
+		grpcConnections:     grpcConnections,
+		grpcConnectionInfo:  grpcConnectionInfo,
 	}
 
 	return ps
@@ -330,4 +352,19 @@ func (ps *PrometheusServer) UpdateProcessedRecords(recordType string, count floa
 	} else if recordType == "errors" {
 		ps.recordsProcessed.WithLabelValues("all", "error").Add(count)
 	}
+}
+
+// UpdateGRPCConnections 更新gRPC连接指标
+func (ps *PrometheusServer) UpdateGRPCConnections(state string, count float64) {
+	ps.grpcConnections.WithLabelValues(state).Set(count)
+}
+
+// UpdateGRPCConnectionInfo 更新gRPC连接详细信息
+func (ps *PrometheusServer) UpdateGRPCConnectionInfo(remoteAddr, connectionID, status, connectedDuration, lastDataAge string, value float64) {
+	ps.grpcConnectionInfo.WithLabelValues(remoteAddr, connectionID, status, connectedDuration, lastDataAge).Set(value)
+}
+
+// ClearGRPCConnectionInfo 清理gRPC连接信息指标
+func (ps *PrometheusServer) ClearGRPCConnectionInfo() {
+	ps.grpcConnectionInfo.Reset()
 }
