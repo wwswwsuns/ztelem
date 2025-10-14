@@ -688,6 +688,64 @@ ORDER BY occur_time DESC;
 2. 创建新的 Issue
 3. 联系维护者
 
+## 🛠 运维与排障更新（2025-10-14）
+
+本次版本在“连接健康检查与 Prometheus 指标”的一致性方面进行了修正，并补充了 SELinux 与 systemd 的运维指引。
+
+- 连接健康检查与指标对齐
+  - 日志与 Prometheus 指标统一复用同一份原子快照（一次加锁内计算）：total/active/stale 由同一来源生成，避免时序不一致。
+  - 暴露指标：
+    - telemetry_grpc_connections{state="total"}
+    - telemetry_grpc_connections{state="active"}
+    - telemetry_grpc_connections{state="stale"}
+  - 僵尸判定保持不变：最后一次收到数据时间超过 15 分钟即视为僵尸连接。
+
+- Watchdog（僵尸连接）说明
+  - 周期性检查由 telemetry-zombie-watch.timer 触发，不需要手动常驻 telemetry-zombie-watch.service。
+  - 如需立即执行一次检查（不等周期），可手动运行：systemctl start telemetry-zombie-watch.service。
+  - 脚本默认从 /metrics 读取上述三行指标计算僵尸比例；统一快照后，日志与 /metrics 将保持一致，避免误判。
+
+- 部署与升级（软链方式，便于回滚）
+  1) 编译
+     - go build -o bin/telemetry main.go
+  2) 暂停定时器与服务（避免抢启）
+     - systemctl stop telemetry-zombie-watch.timer || true
+     - systemctl stop telemetry.service || true
+  3) 备份与替换
+     - ts=$(date +%Y%m%d%H%M%S)
+     - if [ -x /usr/local/bin/telemetry ]; then cp -f /usr/local/bin/telemetry /usr/local/bin/telemetry.bak-$ts; fi
+     - ln -sfn /home/telemetry/bin/telemetry /usr/local/bin/telemetry
+  4) 启动与验证
+     - systemctl start telemetry.service
+     - systemctl start telemetry-zombie-watch.timer
+     - 验证：curl -fsS http://127.0.0.1:12112/metrics | grep '^telemetry_grpc_connections'
+     - 验证：journalctl -u telemetry.service -n 100 --no-pager | grep '连接健康检查'
+
+- SELinux（Enforcing）下的处理
+  - 查看状态：
+    - getenforce（Enforcing/Permissive/Disabled）
+    - sestatus
+  - 若服务报数据库连接 permission denied（但本机到 127.0.0.1:5432 可通），通常是 SELinux 拒绝所致。
+  - 临时验证（不建议长期）：
+    - setenforce 0
+    - systemctl restart telemetry.service
+  - 生成并安装最小放行策略（推荐做法）：
+    - 查看拒绝记录：ausearch -m avc -ts recent | tail -n 100
+    - 生成策略模块：grep denied /var/log/audit/audit.log | audit2allow -M telemetry_local
+    - 安装策略模块：semodule -i telemetry_local.pp
+    - 恢复 Enforcing：setenforce 1；如仍有拒绝，重复上述“生成+安装”过程。
+  - 纠正二进制标签（可选）：
+    - restorecon -v /usr/local/bin/telemetry
+  - 备选方案：将数据库连接切换为 Unix Socket（/var/run/postgresql）以绕开 TCP 策略限制，并在 pg_hba.conf 中放行 local 规则。
+
+- 常见问题速查
+  - systemctl 重启风暴：
+    - systemctl reset-failed telemetry.service 后再启动；必要时临时设置 Restart=no（drop-in 覆盖）排查。
+  - timer 与 service 关系：
+    - 周期性执行只需启用 timer；手动立即检查才启动 .service 一次。
+  - 指标与日志不一致：
+    - 已统一为同一快照口径，若仍不一致，请检查 Prometheus 端点是否可达、metrics_interval 周期是否按预期运行。
+
 ## 🔄 更新日志
 
 ### v2.2.0 (2025-09-28)
