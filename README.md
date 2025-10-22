@@ -703,7 +703,14 @@ ORDER BY occur_time DESC;
 - Watchdog（僵尸连接）说明
   - 周期性检查由 telemetry-zombie-watch.timer 触发，不需要手动常驻 telemetry-zombie-watch.service。
   - 如需立即执行一次检查（不等周期），可手动运行：systemctl start telemetry-zombie-watch.service。
-  - 脚本默认从 /metrics 读取上述三行指标计算僵尸比例；统一快照后，日志与 /metrics 将保持一致，避免误判。
+  - **检测方法（已优化）**：
+    - 原方案：从 Prometheus /metrics 读取指标计算僵尸比例
+    - **新方案（当前使用）**：直接解析程序日志 `/var/log/telemetry/telemetry.log`
+    - 原因：Prometheus指标可能受心跳包影响，无法准确反映业务数据停止的情况
+    - 新方案直接使用程序内部的僵尸连接判定逻辑，更加准确可靠
+  - **触发条件**：僵尸连接比例 > 10%（可在脚本中调整 THRESHOLD 变量）
+  - **查看检测日志**：`journalctl -t telemetry-zombie-v2 --since "10 minutes ago"`
+  - 详细说明见：`docs/zombie-detection-optimization.md`
 
 - 部署与升级（软链方式，便于回滚）
   1) 编译
@@ -745,6 +752,45 @@ ORDER BY occur_time DESC;
     - 周期性执行只需启用 timer；手动立即检查才启动 .service 一次。
   - 指标与日志不一致：
     - 已统一为同一快照口径，若仍不一致，请检查 Prometheus 端点是否可达、metrics_interval 周期是否按预期运行。
+
+## 🔐 SELinux 一键策略安装脚本
+
+为了在 SELinux Enforcing 下稳定运行，可使用一键脚本基于审计日志生成并安装最小放行策略：
+
+- 前置条件
+  - 已复现过一次拒绝（AVC），或准备在 Permissive/Enforcing 下重启服务以产生最新拒绝日志
+  - 系统具备 audit2allow 与 semodule（通常来自 policycoreutils-python-utils 与 selinux-policy-devel）
+
+- 使用步骤
+  ```bash
+  # 如需复现拒绝以抓取最新 AVC（可选）
+  sudo setenforce 0
+  sudo systemctl restart telemetry.service
+
+  # 生成并安装策略（脚本会优先使用 ausearch recent，回退 audit.log）
+  sudo bash scripts/selinux-allow-telemetry.sh
+
+  # 恢复 Enforcing 并验证
+  sudo setenforce 1
+  sudo systemctl restart telemetry.service
+  ```
+
+- 脚本说明
+  - 位置：scripts/selinux-allow-telemetry.sh
+  - 变量（可选）：
+    - MOD_NAME：策略模块名，默认 telemetry_local
+    - AUDIT_LOG：审计日志路径，默认 /var/log/audit/audit.log
+    - BIN_PATH：二进制路径，默认 /usr/local/bin/telemetry
+  - 脚本会：
+    1) 收集最近 AVC（ausearch -m avc -ts recent），无 ausearch 时回退 grep audit.log
+    2) 使用 audit2allow -M 生成 ${MOD_NAME}.pp
+    3) 使用 semodule -i 安装策略模块
+    4) 可选 restorecon 纠正二进制标签
+
+- 常见问题
+  - 生成空策略：说明当前无“denied”记录。请在 Enforcing 下复现一次拒绝，再运行脚本。
+  - 安装后仍拒绝：再次运行服务收集新的 AVC，再次执行脚本迭代放行。
+  - 不想依赖 TCP：可将数据库连接切换为 Unix Socket（/var/run/postgresql），并在 pg_hba.conf 放行 local。
 
 ## 🔄 更新日志
 

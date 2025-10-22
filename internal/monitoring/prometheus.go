@@ -31,6 +31,7 @@ type PrometheusServer struct {
 	systemGoroutines    prometheus.Gauge
 	grpcConnections     *prometheus.GaugeVec
 	grpcConnectionInfo  *prometheus.GaugeVec
+	zombieRatio         prometheus.Gauge
 }
 
 // NewPrometheusServer 创建Prometheus指标服务器
@@ -149,6 +150,14 @@ func NewPrometheusServer(port int, logger *logrus.Logger) *PrometheusServer {
 		[]string{"remote_addr", "connection_id", "status", "connected_duration", "last_data_age"}, // 连接详细标签
 	)
 
+	// 额外：僵尸比例（0-100）
+	zombieRatio := prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "telemetry_zombie_ratio",
+			Help: "Percent of stale connections (0-100)",
+		},
+	)
+
 	// 注册所有指标
 	prometheus.MustRegister(
 		dbWriteDuration,
@@ -165,6 +174,7 @@ func NewPrometheusServer(port int, logger *logrus.Logger) *PrometheusServer {
 		systemGoroutines,
 		grpcConnections,
 		grpcConnectionInfo,
+		zombieRatio,
 	)
 
 	mux := http.NewServeMux()
@@ -250,6 +260,7 @@ telemetry_db_pool_connections{state="acquired"} / telemetry_db_pool_connections{
 		systemGoroutines:    systemGoroutines,
 		grpcConnections:     grpcConnections,
 		grpcConnectionInfo:  grpcConnectionInfo,
+		zombieRatio:         zombieRatio,
 	}
 
 	return ps
@@ -357,6 +368,11 @@ func (ps *PrometheusServer) UpdateProcessedRecords(recordType string, count floa
 // UpdateGRPCConnections 更新gRPC连接指标
 func (ps *PrometheusServer) UpdateGRPCConnections(state string, count float64) {
 	ps.grpcConnections.WithLabelValues(state).Set(count)
+}
+
+// UpdateZombieRatio 更新僵尸连接比例(0-100)
+func (ps *PrometheusServer) UpdateZombieRatio(percent float64) {
+	ps.zombieRatio.Set(percent)
 }
 
 // UpdateGRPCConnectionInfo 更新gRPC连接详细信息

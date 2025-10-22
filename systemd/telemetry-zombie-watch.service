@@ -4,4 +4,4 @@ Wants=telemetry.service
 
 [Service]
 Type=oneshot
-ExecStart=/home/telemetry/scripts/telemetry-zombie-check.sh
+ExecStart=/home/telemetry/scripts/telemetry-zombie-check-v2.sh

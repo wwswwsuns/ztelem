@@ -319,17 +319,50 @@ func updatePrometheusMetrics(prometheusServer *monitoring.PrometheusServer, buff
 	prometheusServer.UpdateProcessedRecords("total", float64(bufferStats.TotalRecordsProcessed))
 	prometheusServer.UpdateProcessedRecords("errors", float64(bufferStats.TotalErrors))
 	
-	// 更新gRPC连接指标
-	if totalConn, ok := connStats["total_connections"].(int); ok {
-		prometheusServer.UpdateGRPCConnections("total", float64(totalConn))
+	// 更新gRPC连接指标（更健壮的类型兼容）
+	var totalConn, activeConn, staleConn int
+	if v, ok := connStats["total_connections"]; ok {
+		switch t := v.(type) {
+		case int:
+			totalConn = t
+		case int64:
+			totalConn = int(t)
+		case float64:
+			totalConn = int(t)
+		}
 	}
-	if activeConn, ok := connStats["active_connections"].(int); ok {
-		prometheusServer.UpdateGRPCConnections("active", float64(activeConn))
+	if v, ok := connStats["active_connections"]; ok {
+		switch t := v.(type) {
+		case int:
+			activeConn = t
+		case int64:
+			activeConn = int(t)
+		case float64:
+			activeConn = int(t)
+		}
 	}
-	if staleConn, ok := connStats["stale_connections"].(int); ok {
-		prometheusServer.UpdateGRPCConnections("stale", float64(staleConn))
+	if v, ok := connStats["stale_connections"]; ok {
+		switch t := v.(type) {
+		case int:
+			staleConn = t
+		case int64:
+			staleConn = int(t)
+		case float64:
+			staleConn = int(t)
+		}
 	}
-	
+
+	prometheusServer.UpdateGRPCConnections("total", float64(totalConn))
+	prometheusServer.UpdateGRPCConnections("active", float64(activeConn))
+	prometheusServer.UpdateGRPCConnections("stale", float64(staleConn))
+
+	// 直接导出僵尸比例（0-100），便于脚本判定
+	if totalConn > 0 {
+		prometheusServer.UpdateZombieRatio(float64(staleConn*100) / float64(totalConn))
+	} else {
+		prometheusServer.UpdateZombieRatio(0)
+	}
+
 	// 更新连接详细信息
 	prometheusServer.ClearGRPCConnectionInfo()
 	connectionDetails := collector.GetConnectionDetails()
