@@ -231,21 +231,34 @@ func TestFloat64Ptr(t *testing.T) {
 }
 
 func TestOpticalPowerPtr(t *testing.T) {
-	// Valid value including 0.0
+	// 0.0 with isValid=true should still return -60 (proto3 default = no signal)
 	v := opticalPowerPtr(0, true)
-	if v == nil || *v != 0 {
-		t.Errorf("opticalPowerPtr(0, true) = %v, want 0", v)
+	if v == nil || *v != -60 {
+		t.Errorf("opticalPowerPtr(0, true) = %v, want -60 (proto3 default)", v)
 	}
 
+	// Valid negative value (normal optical power)
 	v = opticalPowerPtr(-5.5, true)
 	if v == nil || *v != -5.5 {
 		t.Errorf("opticalPowerPtr(-5.5, true) = %v, want -5.5", v)
 	}
 
-	// Invalid should return -60
+	// Valid value around -20 dBm (typical receive power)
+	v = opticalPowerPtr(-20.0, true)
+	if v == nil || *v != -20.0 {
+		t.Errorf("opticalPowerPtr(-20.0, true) = %v, want -20.0", v)
+	}
+
+	// Invalid (isValid=false) should return -60
 	v = opticalPowerPtr(0, false)
 	if v == nil || *v != -60 {
 		t.Errorf("opticalPowerPtr(0, false) = %v, want -60", v)
+	}
+
+	// Invalid with non-zero value should still return -60
+	v = opticalPowerPtr(-5.0, false)
+	if v == nil || *v != -60 {
+		t.Errorf("opticalPowerPtr(-5.0, false) = %v, want -60", v)
 	}
 }
 

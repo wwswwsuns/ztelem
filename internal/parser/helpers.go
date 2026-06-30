@@ -223,14 +223,14 @@ func float64Ptr(v float64) *float64 {
 }
 
 // opticalPowerPtr 专门处理光功率数据的指针转换
-// 对于光功率：0.0是有效值，应该保留；无效值用-60表示无光信号
+// 有效光功率范围: -40 ~ +10 dBm（负值表示接收功率，正值极少）
+// 0.0 是 proto3 float32 默认值，表示字段未被设备设置，等同于无光信号
 func opticalPowerPtr(v float64, isValid bool) *float64 {
-	if !isValid {
-		// 无效或缺失的光功率数据，返回-60表示无光信号
+	if !isValid || v == 0.0 {
+		// 无效、缺失、或 proto3 默认值 0.0 均视为无光信号
 		invalidValue := -60.0
 		return &invalidValue
 	}
-	// 有效的光功率数据，包括0.0，都应该保留
 	return &v
 }
 
