@@ -14,16 +14,20 @@
 - **光功率数据优化**: 准确区分0.0 dBm有效值和无光信号状态(-60 dBm)
 
 ### 性能优化
-- **连接池优化**: 200最大连接，25最小连接
-- **并行写入**: 支持多表并行写入
-- **内存管理**: 智能缓冲区管理，可配置刷新策略
+- **分片锁**: 16分片 × 5种缓冲区类型，消除高并发写入锁竞争
+- **零分配聚合键**: sync.Pool + byte buffer 拼接，避免 Sprintf GC 压力
+- **protobuf 对象池**: sync.Pool 复用 Telemetry/ComponentInfo/InterfaceInfo
+- **PlatformMetric 子结构体**: 拆分为 CommonState/CPU/Mem/Temp/Fan/Power/Optical，按需分配
+- **连接池优化**: 200最大连接，50最小连接，参数可配置
+- **并行写入**: 10个并行写入器，支持多表并行
+- **智能缓冲区管理**: 分片锁 + SwapAll flush，可配置刷新策略
 - **错误重试**: 自动重试机制，提高数据可靠性
 - **gRPC优化**: Keepalive配置、连接监控、自动重连机制
 - **TimescaleDB支持**: 超表、压缩策略、数据保留策略
 
 ### 监控体系
-- **Prometheus指标**: 20+个业务指标
-- **实时监控**: 缓冲区状态、数据库性能、系统资源
+- **Prometheus指标**: 7个精简业务指标（已清理高基数和死代码指标）
+- **实时监控**: 缓冲区状态、数据库连接池、系统资源
 - **告警支持**: 可配置的阈值告警
 - **Web界面**: 指标说明和健康检查
 - **连接监控**: gRPC连接状态实时监控
@@ -792,7 +796,187 @@ ORDER BY occur_time DESC;
   - 安装后仍拒绝：再次运行服务收集新的 AVC，再次执行脚本迭代放行。
   - 不想依赖 TCP：可将数据库连接切换为 Unix Socket（/var/run/postgresql），并在 pg_hba.conf 放行 local。
 
+## 📖 操作指引
+
+### 增加新的 sensor_path 数据类型
+
+当 ZTE 设备新增遥测数据类型时，按以下步骤添加支持：
+
+#### 1. 定义 Protobuf 消息（如有新 proto）
+
+如果新数据类型使用新的 proto 定义：
+```bash
+# 在 proto/ 目录下添加 .proto 文件
+protoc --go_out=. --go-grpc_out=. proto/new_type/new_type.proto
+```
+
+#### 2. 添加数据模型
+
+在 `internal/models/models.go` 中添加新结构体（或扩展现有结构体）：
+
+```go
+// 新数据类型的结构体
+type NewMetricType struct {
+    Timestamp     time.Time `json:"timestamp" db:"timestamp"`
+    SystemID      string    `json:"system_id" db:"system_id"`
+    ComponentName string    `json:"component_name" db:"component_name"`
+    // ... 字段定义
+}
+```
+
+#### 3. 添加解析函数
+
+在 `internal/parser/telemetry_parser.go` 中：
+
+```go
+// 在路由表中添加新的 sensor_path
+routes := []routeEntry{
+    // ... 已有路由
+    {"oc-platform:components/component/new-state", func(m *zteTelemetry.Telemetry) (interface{}, error) {
+        return p.parseNewComponentState(m)
+    }, false},
+}
+
+// 添加解析函数
+func (p *TelemetryParser) parseNewComponentState(msg *zteTelemetry.Telemetry) ([]models.NewMetricType, error) {
+    if len(msg.DataGpb) == 0 {
+        return nil, fmt.Errorf("DataGpb为空")
+    }
+    
+    var metrics []models.NewMetricType
+    for _, dataGpb := range msg.DataGpb {
+        componentInfo := p.componentPool.Get().(*platformProto.ComponentInfo)
+        if err := proto.Unmarshal(dataGpb.GetContent(), componentInfo); err != nil {
+            p.componentPool.Put(componentInfo)
+            continue
+        }
+        
+        // 解析逻辑...
+        
+        proto.Reset(componentInfo)
+        p.componentPool.Put(componentInfo)
+    }
+    return metrics, nil
+}
+```
+
+#### 4. 更新 ParseResult
+
+在 `internal/parser/telemetry_parser.go` 的 `ParseResult` 结构体中添加新字段：
+
+```go
+type ParseResult struct {
+    // ... 已有字段
+    NewMetrics []models.NewMetricType
+}
+```
+
+#### 5. 添加数据库写入
+
+在 `internal/database/database.go` 中：
+
+```go
+func (db *Database) BatchInsertNewMetricsWithContext(ctx context.Context, metrics []models.NewMetricType) error {
+    // 使用 COPY FROM STDIN 批量写入
+    // 参考 BatchInsertPlatformMetricsWithContext 的实现
+}
+```
+
+#### 6. 更新缓冲区管理器
+
+在 `internal/buffer/buffer_manager.go` 和 `internal/buffer/sharded_map.go` 中添加对应的分片 map 和写入逻辑。
+
+#### 7. 更新 collector
+
+在 `internal/collector/simple_collector.go` 的 `processPublishArgs` 中添加新数据类型的处理分支。
+
+#### 8. 添加数据库表
+
+参考 `create_tables.sql`，为新数据类型创建表和索引。
+
+---
+
+### 调整数据上报频率
+
+如需提高设备遥测数据的上报频率，需同步调整缓冲区配置：
+
+| 上报间隔 | 建议 `flush_interval` | 建议 `flush_threshold` | 建议 `parallel_writers` |
+|---|---|---|---|
+| 10 分钟 | 30s | 1000 | 10 |
+| 2 分钟 | 30s | 1000 | 10 |
+| 1 分钟 | 15s | 500 | 10 |
+| 30 秒 | 10s | 500 | 15 |
+| 10 秒 | 5s | 300 | 20 |
+| 5 秒 | 3s | 200 | 30 |
+
+配置示例（10秒上报间隔）：
+```yaml
+buffer:
+  flush_interval: "10s"
+  flush_threshold: 500
+database_writer:
+  parallel_writers: 15
+```
+
+---
+
+### 编译和部署
+
+```bash
+# 编译
+go build -o /usr/local/bin/telemetry ./main.go
+
+# 修复 SELinux 上下文（SELinux Enforcing 环境必须）
+restorecon -v /usr/local/bin/telemetry
+
+# 重启服务
+systemctl restart telemetry.service
+
+# 验证
+curl -s http://localhost:12112/health
+curl -s http://localhost:12112/metrics | grep "telemetry_"
+```
+
+### 运行测试
+
+```bash
+# 运行所有单元测试
+go test -v ./internal/buffer/... ./internal/parser/... ./internal/models/...
+
+# 静态检查
+go vet ./...
+```
+
+### 查看实时日志
+
+```bash
+# 查看最近日志
+tail -f /var/log/telemetry/telemetry.log
+
+# 过滤错误
+grep '"level":"error"' /var/log/telemetry/telemetry.log | tail -20
+
+# 查看监控指标
+journalctl -u telemetry.service --since "5 min ago" --no-pager
+```
+
 ## 🔄 更新日志
+
+### v2.3.0 (2026-06-30)
+- ⚡ **高并发性能优化**
+- 🔧 缓冲区 16 分片锁，消除 300+ 设备并发写入的全局锁竞争
+- 🔧 聚合键生成改用 sync.Pool + byte buffer，零 Sprintf 分配
+- 🔧 protobuf sync.Pool 复用 Telemetry/ComponentInfo/InterfaceInfo 对象
+- 🔧 PlatformMetric 拆分为 7 个子结构体（CommonState/CPU/Mem/Temp/Fan/Power/Optical）
+- 🔧 sensor_path 路由改用有序前缀表 + handler 映射
+- 🔧 枚举转换 Sprintf 改为 strconv.Itoa + 拼接
+- 🔧 连接池参数从 DatabaseConfig 读取（NewDatabaseWithConfig）
+- 📊 **Prometheus 指标清理**
+- 🔧 删除 grpc_connection_info（高基数，326 个独立 series）
+- 🔧 删除 6 个未使用的死代码指标
+- 🐛 修复 Records Processed Rate 累积计数 bug（只添加增量）
+- ✅ 新增 56 个单元测试（buffer/parser/models）
+- 📝 新增操作指引：增加数据类型、调整上报频率、编译部署
 
 ### v2.2.0 (2025-09-28)
 - ✨ **光功率数据处理优化**
