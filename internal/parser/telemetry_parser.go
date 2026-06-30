@@ -2,7 +2,9 @@ package parser
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/wwswwsuns/ztelem/internal/models"
@@ -26,7 +28,7 @@ func convertAlarmStatus(value int32) string {
 	case 2:
 		return "ALARM"
 	default:
-		return fmt.Sprintf("UNKNOWN_%d", value)
+		return "UNKNOWN_" + strconv.Itoa(int(value))
 	}
 }
 
@@ -42,7 +44,7 @@ func convertAdminStatus(value int32) string {
 	case 3:
 		return "ADMIN_STATUS_TESTING"
 	default:
-		return fmt.Sprintf("ADMIN_STATUS_UNKNOWN_%d", value)
+		return "ADMIN_STATUS_UNKNOWN_" + strconv.Itoa(int(value))
 	}
 }
 
@@ -66,7 +68,7 @@ func convertOperStatus(value int32) string {
 	case 7:
 		return "OPER_STATUS_LOWER_LAYER_DOWN"
 	default:
-		return fmt.Sprintf("OPER_STATUS_UNKNOWN_%d", value)
+		return "OPER_STATUS_UNKNOWN_" + strconv.Itoa(int(value))
 	}
 }
 
@@ -80,7 +82,7 @@ func convertIPv4OperStatus(value int32) string {
 	case 2:
 		return "IPV4OPERSTATUS_STATUS_DOWN"
 	default:
-		return fmt.Sprintf("IPV4OPERSTATUS_STATUS_UNKNOWN_%d", value)
+		return "IPV4OPERSTATUS_STATUS_UNKNOWN_" + strconv.Itoa(int(value))
 	}
 }
 
@@ -94,7 +96,7 @@ func convertIPv6OperStatus(value int32) string {
 	case 2:
 		return "IPV6OPERSTATUS_STATUS_DOWN"
 	default:
-		return fmt.Sprintf("IPV6OPERSTATUS_STATUS_UNKNOWN_%d", value)
+		return "IPV6OPERSTATUS_STATUS_UNKNOWN_" + strconv.Itoa(int(value))
 	}
 }
 
@@ -108,7 +110,7 @@ func convertPhyStatus(value int32) string {
 	case 2:
 		return "PHY_STATUS_DOWN"
 	default:
-		return fmt.Sprintf("PHY_STATUS_UNKNOWN_%d", value)
+		return "PHY_STATUS_UNKNOWN_" + strconv.Itoa(int(value))
 	}
 }
 
@@ -126,23 +128,40 @@ type ParseResult struct {
 
 // TelemetryParser telemetry数据解析器
 type TelemetryParser struct {
-	logger *logrus.Logger
+	logger          *logrus.Logger
+	telemetryPool   sync.Pool
+	componentPool   sync.Pool
+	interfacePool   sync.Pool
 }
 
 // NewTelemetryParser 创建新的解析器
 func NewTelemetryParser(logger *logrus.Logger) *TelemetryParser {
 	return &TelemetryParser{
 		logger: logger,
+		telemetryPool: sync.Pool{
+			New: func() interface{} { return new(zteTelemetry.Telemetry) },
+		},
+		componentPool: sync.Pool{
+			New: func() interface{} { return new(platformProto.ComponentInfo) },
+		},
+		interfacePool: sync.Pool{
+			New: func() interface{} { return new(interfaceProto.InterfaceInfo) },
+		},
 	}
 }
 
 // ParseTelemetryData 解析telemetry数据
 func (p *TelemetryParser) ParseTelemetryData(data []byte) (*ParseResult, error) {
-	// 解析ZTE Telemetry消息
-	var telemetryMsg zteTelemetry.Telemetry
-	if err := proto.Unmarshal(data, &telemetryMsg); err != nil {
+	// 从 pool 获取 telemetry 消息对象
+	telemetryMsg := p.telemetryPool.Get().(*zteTelemetry.Telemetry)
+	if err := proto.Unmarshal(data, telemetryMsg); err != nil {
+		p.telemetryPool.Put(telemetryMsg)
 		return nil, fmt.Errorf("解析telemetry消息失败: %v", err)
 	}
+	defer func() {
+		proto.Reset(telemetryMsg)
+		p.telemetryPool.Put(telemetryMsg)
+	}()
 
 	p.logger.Debugf("解析到telemetry消息: system_id=%s, sensor_path=%s, data_type=%s", 
 		telemetryMsg.SystemId, telemetryMsg.SensorPath, telemetryMsg.DataType.String())
@@ -165,7 +184,7 @@ func (p *TelemetryParser) ParseTelemetryData(data []byte) (*ParseResult, error) 
 			telemetryMsg.SystemId, telemetryMsg.SensorPath, len(telemetryMsg.DataGpb))
 		
 		// 告警数据处理
-		alarmMetrics, notificationMetrics, err := p.parseAlarmData(&telemetryMsg)
+		alarmMetrics, notificationMetrics, err := p.parseAlarmData(telemetryMsg)
 		if err != nil {
 			p.logger.WithError(err).Error("解析告警数据失败")
 			return nil, err
@@ -180,146 +199,62 @@ func (p *TelemetryParser) ParseTelemetryData(data []byte) (*ParseResult, error) 
 		return result, nil
 	}
 
-	// 根据sensor_path路由到不同的解析函数 (仅处理PM数据)
-	switch {
-	case strings.HasPrefix(telemetryMsg.SensorPath, "oc-platform:components/component/state/memory"):
-		// 组件内存数据 (优先匹配更具体的路径)
-		metrics, err := p.parseComponentMemoryState(&telemetryMsg)
+	// sensor_path 路由表 — 按前缀长度降序排列，长前缀优先匹配
+	type routeEntry struct {
+		prefix  string
+		handler func(*zteTelemetry.Telemetry) (interface{}, error)
+		exact   bool
+	}
+
+	routes := []routeEntry{
+		// 精确匹配
+		{"oc-platform:components/component", func(m *zteTelemetry.Telemetry) (interface{}, error) { return p.parseComponentsData(m) }, true},
+		// 平台组件 — 长前缀优先
+		{"oc-platform:components/component/oc-transceiver:transceiver/state", func(m *zteTelemetry.Telemetry) (interface{}, error) { return p.parseComponentTransceiverState(m) }, false},
+		{"oc-platform:components/component/cpu/oc-cpu:utilization/state", func(m *zteTelemetry.Telemetry) (interface{}, error) { return p.parseComponentCPUState(m) }, false},
+		{"oc-platform:components/component/oc-linecard:linecard/state", func(m *zteTelemetry.Telemetry) (interface{}, error) { return p.parseComponentLinecardState(m) }, false},
+		{"oc-platform:components/component/power-supply/state", func(m *zteTelemetry.Telemetry) (interface{}, error) { return p.parseComponentPowerSupplyState(m) }, false},
+		{"oc-platform:components/component/fan/state", func(m *zteTelemetry.Telemetry) (interface{}, error) { return p.parseComponentFanState(m) }, false},
+		{"oc-platform:components/component/state/memory", func(m *zteTelemetry.Telemetry) (interface{}, error) { return p.parseComponentMemoryState(m) }, false},
+		{"oc-platform:components/component/state/storage", func(m *zteTelemetry.Telemetry) (interface{}, error) { return p.parseComponentStorageState(m) }, false},
+		{"oc-platform:components/component/state/temperature", func(m *zteTelemetry.Telemetry) (interface{}, error) { return p.parseComponentTemperatureState(m) }, false},
+		{"oc-platform:components/component/state", func(m *zteTelemetry.Telemetry) (interface{}, error) { return p.parseComponentState(m) }, false},
+		// 子接口
+		{"oc-if:interfaces/interface/subinterfaces/subinterface/state/counters", func(m *zteTelemetry.Telemetry) (interface{}, error) { return p.parseSubinterfaceCounters(m) }, false},
+		{"oc-if:interfaces/interface/subinterfaces/subinterface/zte-if:state-period", func(m *zteTelemetry.Telemetry) (interface{}, error) { return p.parseSubinterfaceZteState(m) }, false},
+		{"oc-if:interfaces/interface/subinterfaces/subinterface/state", func(m *zteTelemetry.Telemetry) (interface{}, error) { return p.parseSubinterfaceState(m) }, false},
+		// 接口
+		{"oc-if:interfaces/interface/state/counters", func(m *zteTelemetry.Telemetry) (interface{}, error) { return p.parseInterfaceCounters(m) }, false},
+		{"oc-if:interfaces/interface/zte-if:state-period", func(m *zteTelemetry.Telemetry) (interface{}, error) { return p.parseInterfaceZteState(m) }, false},
+		{"oc-if:interfaces/interface/state", func(m *zteTelemetry.Telemetry) (interface{}, error) { return p.parseInterfaceState(m) }, false},
+	}
+
+	sensorPath := telemetryMsg.SensorPath
+	for _, route := range routes {
+		if route.exact {
+			if sensorPath != route.prefix {
+				continue
+			}
+		} else if !strings.HasPrefix(sensorPath, route.prefix) {
+			continue
+		}
+
+		val, err := route.handler(telemetryMsg)
 		if err != nil {
 			return nil, err
 		}
-		result.PlatformMetrics = metrics
-
-	case strings.HasPrefix(telemetryMsg.SensorPath, "oc-platform:components/component/state/storage"):
-		// 组件存储数据
-		metrics, err := p.parseComponentStorageState(&telemetryMsg)
-		if err != nil {
-			return nil, err
+		switch v := val.(type) {
+		case []models.PlatformMetric:
+			result.PlatformMetrics = v
+		case []models.InterfaceMetric:
+			result.InterfaceMetrics = v
+		case []models.SubinterfaceMetric:
+			result.SubinterfaceMetrics = v
 		}
-		result.PlatformMetrics = metrics
-
-	case strings.HasPrefix(telemetryMsg.SensorPath, "oc-platform:components/component/state/temperature"):
-		// 组件温度数据
-		metrics, err := p.parseComponentTemperatureState(&telemetryMsg)
-		if err != nil {
-			return nil, err
-		}
-		result.PlatformMetrics = metrics
-
-	case strings.HasPrefix(telemetryMsg.SensorPath, "oc-platform:components/component/state"):
-		// 组件通用数据 (匹配 oc-platform:components/component/state )
-		metrics, err := p.parseComponentState(&telemetryMsg)
-		if err != nil {
-			return nil, err
-		}
-		result.PlatformMetrics = metrics
-
-	case telemetryMsg.SensorPath == "oc-platform:components/component":
-		// 组件综合数据 (包含CPU、内存等多种数据)
-		metrics, err := p.parseComponentsData(&telemetryMsg)
-		if err != nil {
-			return nil, err
-		}
-		result.PlatformMetrics = metrics
-
-	case strings.HasPrefix(telemetryMsg.SensorPath, "oc-platform:components/component/fan/state"):
-		// 组件风扇数据
-		metrics, err := p.parseComponentFanState(&telemetryMsg)
-		if err != nil {
-			return nil, err
-		}
-		result.PlatformMetrics = metrics
-
-
-
-	case strings.HasPrefix(telemetryMsg.SensorPath, "oc-platform:components/component/power-supply/state"):
-		// 组件电源数据
-		metrics, err := p.parseComponentPowerSupplyState(&telemetryMsg)
-		if err != nil {
-			return nil, err
-		}
-		result.PlatformMetrics = metrics
-
-	case strings.HasPrefix(telemetryMsg.SensorPath, "oc-platform:components/component/oc-linecard:linecard/state"):
-		// 组件线卡数据
-		metrics, err := p.parseComponentLinecardState(&telemetryMsg)
-		if err != nil {
-			return nil, err
-		}
-		result.PlatformMetrics = metrics
-
-	case strings.HasPrefix(telemetryMsg.SensorPath, "oc-platform:components/component/cpu/oc-cpu:utilization/state"):
-		// 组件CPU数据
-		metrics, err := p.parseComponentCPUState(&telemetryMsg)
-		if err != nil {
-			return nil, err
-		}
-		result.PlatformMetrics = metrics
-
-	case strings.HasPrefix(telemetryMsg.SensorPath, "oc-platform:components/component/oc-transceiver:transceiver/state"):
-		// 组件光模块数据
-		metrics, err := p.parseComponentTransceiverState(&telemetryMsg)
-		if err != nil {
-			return nil, err
-		}
-		result.PlatformMetrics = metrics
-
-	case strings.HasPrefix(telemetryMsg.SensorPath, "oc-if:interfaces/interface/state") &&
-		 !strings.Contains(strings.TrimPrefix(telemetryMsg.SensorPath, "oc-if:interfaces/interface/state"), "/"):
-		// 接口状态数据 (精确匹配)
-		metrics, err := p.parseInterfaceState(&telemetryMsg)
-		if err != nil {
-			return nil, err
-		}
-		result.InterfaceMetrics = metrics
-
-	case strings.HasPrefix(telemetryMsg.SensorPath, "oc-if:interfaces/interface/zte-if:state-period"):
-		// 接口ZTE扩展数据
-		metrics, err := p.parseInterfaceZteState(&telemetryMsg)
-		if err != nil {
-			return nil, err
-		}
-		result.InterfaceMetrics = metrics
-
-	case strings.HasPrefix(telemetryMsg.SensorPath, "oc-if:interfaces/interface/state/counters"):
-		// 接口计数器数据
-		metrics, err := p.parseInterfaceCounters(&telemetryMsg)
-		if err != nil {
-			return nil, err
-		}
-		result.InterfaceMetrics = metrics
-
-	case strings.HasPrefix(telemetryMsg.SensorPath, "oc-if:interfaces/interface/subinterfaces/subinterface/state") &&
-		 !strings.Contains(strings.TrimPrefix(telemetryMsg.SensorPath, "oc-if:interfaces/interface/subinterfaces/subinterface/state"), "/"):
-		// 子接口状态数据 (精确匹配)
-		metrics, err := p.parseSubinterfaceState(&telemetryMsg)
-		if err != nil {
-			return nil, err
-		}
-		result.SubinterfaceMetrics = metrics
-
-	case strings.HasPrefix(telemetryMsg.SensorPath, "oc-if:interfaces/interface/subinterfaces/subinterface/zte-if:state-period"):
-		// 子接口ZTE扩展数据
-		metrics, err := p.parseSubinterfaceZteState(&telemetryMsg)
-		if err != nil {
-			return nil, err
-		}
-		result.SubinterfaceMetrics = metrics
-
-	case strings.HasPrefix(telemetryMsg.SensorPath, "oc-if:interfaces/interface/subinterfaces/subinterface/state/counters"):
-		// 子接口计数器数据
-		metrics, err := p.parseSubinterfaceCounters(&telemetryMsg)
-		if err != nil {
-			return nil, err
-		}
-		result.SubinterfaceMetrics = metrics
-
-
-
-	default:
-		p.logger.Warnf("未知的sensor_path: %s", telemetryMsg.SensorPath)
 		return result, nil
 	}
+
+	p.logger.Warnf("未知的sensor_path: %s", telemetryMsg.SensorPath)
 
 	return result, nil
 }
@@ -334,8 +269,9 @@ func (p *TelemetryParser) parseComponentState(msg *zteTelemetry.Telemetry) ([]mo
 	
 	// 遍历所有DataGpb条目，每个可能包含一个或多个组件的信息
 	for _, dataGpb := range msg.DataGpb {
-		var componentInfo platformProto.ComponentInfo
-		if err := proto.Unmarshal(dataGpb.GetContent(), &componentInfo); err != nil {
+		componentInfo := p.componentPool.Get().(*platformProto.ComponentInfo)
+		if err := proto.Unmarshal(dataGpb.GetContent(), componentInfo); err != nil {
+			p.componentPool.Put(componentInfo)
 			p.logger.Warnf("解析组件信息失败: %v", err)
 			continue
 		}
@@ -346,6 +282,7 @@ func (p *TelemetryParser) parseComponentState(msg *zteTelemetry.Telemetry) ([]mo
 				Timestamp:     time.UnixMilli(int64(msg.MsgTimestamp)),
 				SystemID:      msg.SystemId,
 				ComponentName: componentInfo.GetName(),
+				CommonState:   &models.CommonState{},
 			}
 
 			metric.OperStatus = stringPtr(commonState.GetOperStatus())
@@ -362,6 +299,9 @@ func (p *TelemetryParser) parseComponentState(msg *zteTelemetry.Telemetry) ([]mo
 			metric.TotalInputPower = stringPtr(commonState.GetTotalInputPower())
 			metrics = append(metrics, metric)
 		}
+
+		proto.Reset(componentInfo)
+		p.componentPool.Put(componentInfo)
 	}
 
 	return metrics, nil
@@ -378,8 +318,9 @@ func (p *TelemetryParser) parseComponentsData(msg *zteTelemetry.Telemetry) ([]mo
 	
 	// 遍历所有DataGpb条目，每个可能包含一个或多个组件的信息
 	for _, dataGpb := range msg.DataGpb {
-		var componentInfo platformProto.ComponentInfo
-		if err := proto.Unmarshal(dataGpb.GetContent(), &componentInfo); err != nil {
+		componentInfo := p.componentPool.Get().(*platformProto.ComponentInfo)
+		if err := proto.Unmarshal(dataGpb.GetContent(), componentInfo); err != nil {
+			p.componentPool.Put(componentInfo)
 			p.logger.Warnf("解析组件信息失败: %v", err)
 			continue
 		}
@@ -389,6 +330,7 @@ func (p *TelemetryParser) parseComponentsData(msg *zteTelemetry.Telemetry) ([]mo
 			Timestamp:     time.UnixMilli(int64(msg.MsgTimestamp)),
 			SystemID:      msg.SystemId,
 			ComponentName: componentInfo.GetName(),
+			CommonState:   &models.CommonState{},
 		}
 
 		// 解析通用状态信息
@@ -409,6 +351,7 @@ func (p *TelemetryParser) parseComponentsData(msg *zteTelemetry.Telemetry) ([]mo
 
 		// 解析CPU信息
 		if cpuInfo := componentInfo.GetCpuInfo(); cpuInfo != nil {
+			metric.CPUData = &models.CPUData{}
 			metric.CPUInstant = float64Ptr(float64(cpuInfo.GetInstant()))
 			metric.CPUAvg = float64Ptr(float64(cpuInfo.GetAvg()))
 			metric.CPUMin = float64Ptr(float64(cpuInfo.GetMin()))
@@ -425,6 +368,7 @@ func (p *TelemetryParser) parseComponentsData(msg *zteTelemetry.Telemetry) ([]mo
 
 		// 解析内存信息
 		if memInfo := componentInfo.GetMemInfo(); memInfo != nil {
+			metric.MemData = &models.MemData{}
 			metric.MemAvailable = uint64Ptr(uint64(bytesToMB(memInfo.GetAvailable())))
 			metric.MemUtilized = uint64Ptr(uint64(bytesToMB(memInfo.GetUtilized())))
 			metric.MemFree = uint64Ptr(uint64(bytesToMB(memInfo.GetFree())))
@@ -437,6 +381,7 @@ func (p *TelemetryParser) parseComponentsData(msg *zteTelemetry.Telemetry) ([]mo
 
 		// 解析温度信息
 		if tempInfo := componentInfo.GetTempInfo(); tempInfo != nil {
+			metric.TempData = &models.TempData{}
 			metric.TempInstant = float64Ptr(float64(tempInfo.GetInstant()))
 			metric.TempAvg = float64Ptr(float64(tempInfo.GetAvg()))
 			metric.TempMin = float64Ptr(float64(tempInfo.GetMin()))
@@ -457,6 +402,7 @@ func (p *TelemetryParser) parseComponentsData(msg *zteTelemetry.Telemetry) ([]mo
 
 		// 解析风扇信息
 		if fanInfo := componentInfo.GetFanInfo(); fanInfo != nil {
+			metric.FanData = &models.FanData{}
 			metric.FanSpeed = uint32Ptr(fanInfo.GetSpeed())
 			metric.FanState = stringPtr(fanInfo.GetState())
 			metric.FanPhyStatus = stringPtr(fanInfo.GetPhyStatus())
@@ -469,6 +415,7 @@ func (p *TelemetryParser) parseComponentsData(msg *zteTelemetry.Telemetry) ([]mo
 
 		// 解析电源信息
 		if powerInfo := componentInfo.GetPowerInfo(); powerInfo != nil {
+			metric.PowerData = &models.PowerData{}
 			metric.PowerEnable = boolPtr(powerInfo.GetEnable())
 			metric.PowerCapacity = float64Ptr(float64(powerInfo.GetCapacity()))
 			metric.PowerInputCurrent = float64Ptr(float64(powerInfo.GetInputCurrent()))
@@ -491,11 +438,15 @@ func (p *TelemetryParser) parseComponentsData(msg *zteTelemetry.Telemetry) ([]mo
 
 		// 解析存储信息
 		if storageInfo := componentInfo.GetStorageInfo(); storageInfo != nil {
-			metric.StorageAvailability = float64Ptr(float64(storageInfo.GetAvailability()))
+			if metric.MemData == nil {
+				metric.MemData = &models.MemData{}
+			}
+			metric.MemData.StorageAvailability = float64Ptr(float64(storageInfo.GetAvailability()))
 		}
 
 		// 解析光模块信息
 		if opticalInfo := componentInfo.GetOpticalInfo(); opticalInfo != nil {
+			metric.OpticalData = &models.OpticalData{}
 			if inPower := opticalInfo.GetInPower(); inPower != nil {
 				metric.OpticalInPower = opticalPowerPtr(float64(inPower.GetInstant()), true)
 			} else {
@@ -554,11 +505,17 @@ func (p *TelemetryParser) parseComponentsData(msg *zteTelemetry.Telemetry) ([]mo
 
 		// 解析线卡信息
 		if linecardInfo := componentInfo.GetPowerAdminState(); linecardInfo != nil {
-			metric.LinecardPowerAdminState = stringPtr(linecardInfo.GetPowerAdminState())
+			if metric.PowerData == nil {
+				metric.PowerData = &models.PowerData{}
+			}
+			metric.PowerData.LinecardPowerAdminState = stringPtr(linecardInfo.GetPowerAdminState())
 		}
 
 		// 将完整的组件指标添加到结果中
 		metrics = append(metrics, metric)
+
+		proto.Reset(componentInfo)
+		p.componentPool.Put(componentInfo)
 	}
 
 	return metrics, nil
@@ -574,8 +531,9 @@ func (p *TelemetryParser) parseComponentFanState(msg *zteTelemetry.Telemetry) ([
 
 	// 遍历所有DataGpb条目，每个可能包含一个或多个组件的信息
 	for _, dataGpb := range msg.DataGpb {
-		var componentInfo platformProto.ComponentInfo
-		if err := proto.Unmarshal(dataGpb.GetContent(), &componentInfo); err != nil {
+		componentInfo := p.componentPool.Get().(*platformProto.ComponentInfo)
+		if err := proto.Unmarshal(dataGpb.GetContent(), componentInfo); err != nil {
+			p.componentPool.Put(componentInfo)
 			p.logger.Warnf("解析组件信息失败: %v", err)
 			continue
 		}
@@ -586,6 +544,7 @@ func (p *TelemetryParser) parseComponentFanState(msg *zteTelemetry.Telemetry) ([
 				Timestamp:     time.UnixMilli(int64(msg.MsgTimestamp)),
 				SystemID:      msg.SystemId,
 				ComponentName: componentInfo.GetName(),
+				FanData:       &models.FanData{},
 			}
 
 			metric.FanSpeed = uint32Ptr(fanInfo.GetSpeed())
@@ -599,6 +558,9 @@ func (p *TelemetryParser) parseComponentFanState(msg *zteTelemetry.Telemetry) ([
 
 			metrics = append(metrics, metric)
 		}
+
+		proto.Reset(componentInfo)
+		p.componentPool.Put(componentInfo)
 	}
 
 	return metrics, nil
@@ -614,8 +576,9 @@ func (p *TelemetryParser) parseComponentMemoryState(msg *zteTelemetry.Telemetry)
 
 	// 遍历所有DataGpb条目，每个可能包含一个或多个组件的信息
 	for _, dataGpb := range msg.DataGpb {
-		var componentInfo platformProto.ComponentInfo
-		if err := proto.Unmarshal(dataGpb.GetContent(), &componentInfo); err != nil {
+		componentInfo := p.componentPool.Get().(*platformProto.ComponentInfo)
+		if err := proto.Unmarshal(dataGpb.GetContent(), componentInfo); err != nil {
+			p.componentPool.Put(componentInfo)
 			p.logger.Warnf("解析组件信息失败: %v", err)
 			continue
 		}
@@ -626,6 +589,7 @@ func (p *TelemetryParser) parseComponentMemoryState(msg *zteTelemetry.Telemetry)
 				Timestamp:     time.UnixMilli(int64(msg.MsgTimestamp)),
 				SystemID:      msg.SystemId,
 				ComponentName: componentInfo.GetName(),
+				MemData:       &models.MemData{},
 			}
 
 			metric.MemAvailable = uint64Ptr(uint64(bytesToMB(memInfo.GetAvailable())))
@@ -640,6 +604,9 @@ func (p *TelemetryParser) parseComponentMemoryState(msg *zteTelemetry.Telemetry)
 
 			metrics = append(metrics, metric)
 		}
+
+		proto.Reset(componentInfo)
+		p.componentPool.Put(componentInfo)
 	}
 
 	return metrics, nil
@@ -655,8 +622,9 @@ func (p *TelemetryParser) parseComponentStorageState(msg *zteTelemetry.Telemetry
 
 	// 遍历所有DataGpb条目
 	for _, dataGpb := range msg.DataGpb {
-		var componentInfo platformProto.ComponentInfo
-		if err := proto.Unmarshal(dataGpb.GetContent(), &componentInfo); err != nil {
+		componentInfo := p.componentPool.Get().(*platformProto.ComponentInfo)
+		if err := proto.Unmarshal(dataGpb.GetContent(), componentInfo); err != nil {
+			p.componentPool.Put(componentInfo)
 			return nil, fmt.Errorf("解析组件信息失败: %v", err)
 		}
 
@@ -666,12 +634,16 @@ func (p *TelemetryParser) parseComponentStorageState(msg *zteTelemetry.Telemetry
 				Timestamp:     time.UnixMilli(int64(msg.MsgTimestamp)),
 				SystemID:      msg.SystemId,
 				ComponentName: componentInfo.GetName(),
+				MemData:       &models.MemData{},
 			}
 
-			metric.StorageAvailability = float64Ptr(float64(storageInfo.GetAvailability()))
+			metric.MemData.StorageAvailability = float64Ptr(float64(storageInfo.GetAvailability()))
 
 			metrics = append(metrics, metric)
 		}
+
+		proto.Reset(componentInfo)
+		p.componentPool.Put(componentInfo)
 	}
 
 	return metrics, nil
@@ -687,8 +659,9 @@ func (p *TelemetryParser) parseComponentTemperatureState(msg *zteTelemetry.Telem
 
 	// 遍历所有DataGpb条目
 	for _, dataGpb := range msg.DataGpb {
-		var componentInfo platformProto.ComponentInfo
-		if err := proto.Unmarshal(dataGpb.GetContent(), &componentInfo); err != nil {
+		componentInfo := p.componentPool.Get().(*platformProto.ComponentInfo)
+		if err := proto.Unmarshal(dataGpb.GetContent(), componentInfo); err != nil {
+			p.componentPool.Put(componentInfo)
 			return nil, fmt.Errorf("解析组件信息失败: %v", err)
 		}
 
@@ -698,6 +671,7 @@ func (p *TelemetryParser) parseComponentTemperatureState(msg *zteTelemetry.Telem
 				Timestamp:     time.UnixMilli(int64(msg.MsgTimestamp)),
 				SystemID:      msg.SystemId,
 				ComponentName: componentInfo.GetName(),
+				TempData:      &models.TempData{},
 			}
 
 			metric.TempInstant = float64Ptr(float64(tempInfo.GetInstant()))
@@ -719,6 +693,9 @@ func (p *TelemetryParser) parseComponentTemperatureState(msg *zteTelemetry.Telem
 
 			metrics = append(metrics, metric)
 		}
+
+		proto.Reset(componentInfo)
+		p.componentPool.Put(componentInfo)
 	}
 
 	return metrics, nil
@@ -734,8 +711,9 @@ func (p *TelemetryParser) parseComponentPowerSupplyState(msg *zteTelemetry.Telem
 
 	// 遍历所有DataGpb条目
 	for _, dataGpb := range msg.DataGpb {
-		var componentInfo platformProto.ComponentInfo
-		if err := proto.Unmarshal(dataGpb.GetContent(), &componentInfo); err != nil {
+		componentInfo := p.componentPool.Get().(*platformProto.ComponentInfo)
+		if err := proto.Unmarshal(dataGpb.GetContent(), componentInfo); err != nil {
+			p.componentPool.Put(componentInfo)
 			return nil, fmt.Errorf("解析组件信息失败: %v", err)
 		}
 
@@ -745,6 +723,7 @@ func (p *TelemetryParser) parseComponentPowerSupplyState(msg *zteTelemetry.Telem
 				Timestamp:     time.UnixMilli(int64(msg.MsgTimestamp)),
 				SystemID:      msg.SystemId,
 				ComponentName: componentInfo.GetName(),
+				PowerData:     &models.PowerData{},
 			}
 
 			metric.PowerEnable = boolPtr(powerInfo.GetEnable())
@@ -770,6 +749,9 @@ func (p *TelemetryParser) parseComponentPowerSupplyState(msg *zteTelemetry.Telem
 
 			metrics = append(metrics, metric)
 		}
+
+		proto.Reset(componentInfo)
+		p.componentPool.Put(componentInfo)
 	}
 
 	return metrics, nil
@@ -785,8 +767,9 @@ func (p *TelemetryParser) parseComponentLinecardState(msg *zteTelemetry.Telemetr
 
 	// 遍历所有DataGpb条目
 	for _, dataGpb := range msg.DataGpb {
-		var componentInfo platformProto.ComponentInfo
-		if err := proto.Unmarshal(dataGpb.GetContent(), &componentInfo); err != nil {
+		componentInfo := p.componentPool.Get().(*platformProto.ComponentInfo)
+		if err := proto.Unmarshal(dataGpb.GetContent(), componentInfo); err != nil {
+			p.componentPool.Put(componentInfo)
 			return nil, fmt.Errorf("解析组件信息失败: %v", err)
 		}
 
@@ -796,12 +779,16 @@ func (p *TelemetryParser) parseComponentLinecardState(msg *zteTelemetry.Telemetr
 				Timestamp:     time.UnixMilli(int64(msg.MsgTimestamp)),
 				SystemID:      msg.SystemId,
 				ComponentName: componentInfo.GetName(),
+				PowerData:     &models.PowerData{},
 			}
 
 			metric.LinecardPowerAdminState = stringPtr(linecardInfo.GetPowerAdminState())
 
 			metrics = append(metrics, metric)
 		}
+
+		proto.Reset(componentInfo)
+		p.componentPool.Put(componentInfo)
 	}
 
 	return metrics, nil
@@ -817,8 +804,9 @@ func (p *TelemetryParser) parseComponentCPUState(msg *zteTelemetry.Telemetry) ([
 
 	// 遍历所有DataGpb条目
 	for _, dataGpb := range msg.DataGpb {
-		var componentInfo platformProto.ComponentInfo
-		if err := proto.Unmarshal(dataGpb.GetContent(), &componentInfo); err != nil {
+		componentInfo := p.componentPool.Get().(*platformProto.ComponentInfo)
+		if err := proto.Unmarshal(dataGpb.GetContent(), componentInfo); err != nil {
+			p.componentPool.Put(componentInfo)
 			return nil, fmt.Errorf("解析组件信息失败: %v", err)
 		}
 
@@ -827,6 +815,7 @@ func (p *TelemetryParser) parseComponentCPUState(msg *zteTelemetry.Telemetry) ([
 				Timestamp:     time.UnixMilli(int64(msg.MsgTimestamp)),
 				SystemID:      msg.SystemId,
 				ComponentName: componentInfo.GetName(),
+				CPUData:       &models.CPUData{},
 			}
 
 			metric.CPUInstant = float64Ptr(float64(cpuInfo.GetInstant()))
@@ -843,6 +832,9 @@ func (p *TelemetryParser) parseComponentCPUState(msg *zteTelemetry.Telemetry) ([
 
 			metrics = append(metrics, metric)
 		}
+
+		proto.Reset(componentInfo)
+		p.componentPool.Put(componentInfo)
 	}
 
 	return metrics, nil
@@ -858,8 +850,9 @@ func (p *TelemetryParser) parseComponentTransceiverState(msg *zteTelemetry.Telem
 
 	// 遍历所有DataGpb条目
 	for _, dataGpb := range msg.DataGpb {
-		var componentInfo platformProto.ComponentInfo
-		if err := proto.Unmarshal(dataGpb.GetContent(), &componentInfo); err != nil {
+		componentInfo := p.componentPool.Get().(*platformProto.ComponentInfo)
+		if err := proto.Unmarshal(dataGpb.GetContent(), componentInfo); err != nil {
+			p.componentPool.Put(componentInfo)
 			return nil, fmt.Errorf("解析组件信息失败: %v", err)
 		}
 
@@ -869,6 +862,7 @@ func (p *TelemetryParser) parseComponentTransceiverState(msg *zteTelemetry.Telem
 				Timestamp:     time.UnixMilli(int64(msg.MsgTimestamp)),
 				SystemID:      msg.SystemId,
 				ComponentName: componentInfo.GetName(),
+				OpticalData:   &models.OpticalData{},
 			}
 
 			if inPower := opticalInfo.GetInPower(); inPower != nil {
@@ -929,6 +923,9 @@ func (p *TelemetryParser) parseComponentTransceiverState(msg *zteTelemetry.Telem
 
 			metrics = append(metrics, metric)
 		}
+
+		proto.Reset(componentInfo)
+		p.componentPool.Put(componentInfo)
 	}
 
 	return metrics, nil
@@ -944,8 +941,9 @@ func (p *TelemetryParser) parseInterfaceState(msg *zteTelemetry.Telemetry) ([]mo
 
 	// 遍历所有DataGpb条目
 	for _, dataGpb := range msg.DataGpb {
-		var interfaceInfo interfaceProto.InterfaceInfo
-		if err := proto.Unmarshal(dataGpb.GetContent(), &interfaceInfo); err != nil {
+		interfaceInfo := p.interfacePool.Get().(*interfaceProto.InterfaceInfo)
+		if err := proto.Unmarshal(dataGpb.GetContent(), interfaceInfo); err != nil {
+			p.interfacePool.Put(interfaceInfo)
 			return nil, fmt.Errorf("解析接口信息失败: %v", err)
 		}
 
@@ -979,6 +977,9 @@ func (p *TelemetryParser) parseInterfaceState(msg *zteTelemetry.Telemetry) ([]mo
 
 			metrics = append(metrics, metric)
 		}
+
+		proto.Reset(interfaceInfo)
+		p.interfacePool.Put(interfaceInfo)
 	}
 
 	return metrics, nil
@@ -994,8 +995,9 @@ func (p *TelemetryParser) parseInterfaceZteState(msg *zteTelemetry.Telemetry) ([
 
 	// 遍历所有DataGpb条目
 	for _, dataGpb := range msg.DataGpb {
-		var interfaceInfo interfaceProto.InterfaceInfo
-		if err := proto.Unmarshal(dataGpb.GetContent(), &interfaceInfo); err != nil {
+		interfaceInfo := p.interfacePool.Get().(*interfaceProto.InterfaceInfo)
+		if err := proto.Unmarshal(dataGpb.GetContent(), interfaceInfo); err != nil {
+			p.interfacePool.Put(interfaceInfo)
 			return nil, fmt.Errorf("解析接口信息失败: %v", err)
 		}
 
@@ -1029,6 +1031,9 @@ func (p *TelemetryParser) parseInterfaceZteState(msg *zteTelemetry.Telemetry) ([
 
 			metrics = append(metrics, metric)
 		}
+
+		proto.Reset(interfaceInfo)
+		p.interfacePool.Put(interfaceInfo)
 	}
 
 	return metrics, nil
@@ -1044,8 +1049,9 @@ func (p *TelemetryParser) parseInterfaceCounters(msg *zteTelemetry.Telemetry) ([
 
 	// 遍历所有DataGpb条目，每个可能包含一个或多个接口的信息
 	for _, dataGpb := range msg.DataGpb {
-		var interfaceInfo interfaceProto.InterfaceInfo
-		if err := proto.Unmarshal(dataGpb.GetContent(), &interfaceInfo); err != nil {
+		interfaceInfo := p.interfacePool.Get().(*interfaceProto.InterfaceInfo)
+		if err := proto.Unmarshal(dataGpb.GetContent(), interfaceInfo); err != nil {
+			p.interfacePool.Put(interfaceInfo)
 			p.logger.Warnf("解析接口信息失败: %v", err)
 			continue
 		}
@@ -1110,6 +1116,9 @@ func (p *TelemetryParser) parseInterfaceCounters(msg *zteTelemetry.Telemetry) ([
 
 			metrics = append(metrics, metric)
 		}
+
+		proto.Reset(interfaceInfo)
+		p.interfacePool.Put(interfaceInfo)
 	}
 
 	return metrics, nil
@@ -1125,8 +1134,9 @@ func (p *TelemetryParser) parseSubinterfaceState(msg *zteTelemetry.Telemetry) ([
 
 	// 遍历所有DataGpb条目
 	for _, dataGpb := range msg.DataGpb {
-		var interfaceInfo interfaceProto.InterfaceInfo
-		if err := proto.Unmarshal(dataGpb.GetContent(), &interfaceInfo); err != nil {
+		interfaceInfo := p.interfacePool.Get().(*interfaceProto.InterfaceInfo)
+		if err := proto.Unmarshal(dataGpb.GetContent(), interfaceInfo); err != nil {
+			p.interfacePool.Put(interfaceInfo)
 			return nil, fmt.Errorf("解析接口信息失败: %v", err)
 		}
 
@@ -1161,6 +1171,9 @@ func (p *TelemetryParser) parseSubinterfaceState(msg *zteTelemetry.Telemetry) ([
 
 			metrics = append(metrics, metric)
 		}
+
+		proto.Reset(interfaceInfo)
+		p.interfacePool.Put(interfaceInfo)
 	}
 
 	return metrics, nil
@@ -1176,8 +1189,9 @@ func (p *TelemetryParser) parseSubinterfaceZteState(msg *zteTelemetry.Telemetry)
 
 	// 遍历所有DataGpb条目
 	for _, dataGpb := range msg.DataGpb {
-		var interfaceInfo interfaceProto.InterfaceInfo
-		if err := proto.Unmarshal(dataGpb.GetContent(), &interfaceInfo); err != nil {
+		interfaceInfo := p.interfacePool.Get().(*interfaceProto.InterfaceInfo)
+		if err := proto.Unmarshal(dataGpb.GetContent(), interfaceInfo); err != nil {
+			p.interfacePool.Put(interfaceInfo)
 			return nil, fmt.Errorf("解析接口信息失败: %v", err)
 		}
 
@@ -1214,6 +1228,9 @@ func (p *TelemetryParser) parseSubinterfaceZteState(msg *zteTelemetry.Telemetry)
 			}
 		metrics = append(metrics, metric)
 		}
+
+		proto.Reset(interfaceInfo)
+		p.interfacePool.Put(interfaceInfo)
 	}
 
 	return metrics, nil
@@ -1229,8 +1246,9 @@ func (p *TelemetryParser) parseSubinterfaceCounters(msg *zteTelemetry.Telemetry)
 
 	// 遍历所有DataGpb条目
 	for _, dataGpb := range msg.DataGpb {
-		var interfaceInfo interfaceProto.InterfaceInfo
-		if err := proto.Unmarshal(dataGpb.GetContent(), &interfaceInfo); err != nil {
+		interfaceInfo := p.interfacePool.Get().(*interfaceProto.InterfaceInfo)
+		if err := proto.Unmarshal(dataGpb.GetContent(), interfaceInfo); err != nil {
+			p.interfacePool.Put(interfaceInfo)
 			return nil, fmt.Errorf("解析接口信息失败: %v", err)
 		}
 
@@ -1299,6 +1317,9 @@ func (p *TelemetryParser) parseSubinterfaceCounters(msg *zteTelemetry.Telemetry)
 
 			metrics = append(metrics, metric)
 		}
+
+		proto.Reset(interfaceInfo)
+		p.interfacePool.Put(interfaceInfo)
 	}
 
 	return metrics, nil

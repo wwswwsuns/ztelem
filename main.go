@@ -19,6 +19,12 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+// 用于计算 Prometheus Counter 增量
+var (
+	prevProcessedRecords int64
+	prevErrorRecords     int64
+)
+
 var (
 	configFile = flag.String("config", "production-config-optimized.yaml", "配置文件路径")
 	debugMode  = flag.Bool("debug", false, "启用调试模式")
@@ -45,14 +51,7 @@ func main() {
 	printConfigSummary(log, cfg)
 
 	// 初始化数据库连接
-	db, err := database.NewDatabase(
-		cfg.Database.Host,
-		cfg.Database.Port,
-		cfg.Database.User,
-		cfg.Database.Password,
-		cfg.Database.Database,
-		log,
-	)
+	db, err := database.NewDatabaseWithConfig(cfg.Database, log)
 	if err != nil {
 		log.WithError(err).Fatal("数据库连接失败")
 	}
@@ -315,9 +314,15 @@ func updatePrometheusMetrics(prometheusServer *monitoring.PrometheusServer, buff
 		float64(m.HeapSys),
 	)
 	
-	// 更新处理统计
-	prometheusServer.UpdateProcessedRecords("total", float64(bufferStats.TotalRecordsProcessed))
-	prometheusServer.UpdateProcessedRecords("errors", float64(bufferStats.TotalErrors))
+	// 更新处理统计 — 只添加增量，避免累积值重复累加
+	if delta := bufferStats.TotalRecordsProcessed - prevProcessedRecords; delta > 0 {
+		prometheusServer.UpdateProcessedRecords("total", float64(delta))
+	}
+	if delta := bufferStats.TotalErrors - prevErrorRecords; delta > 0 {
+		prometheusServer.UpdateProcessedRecords("errors", float64(delta))
+	}
+	prevProcessedRecords = bufferStats.TotalRecordsProcessed
+	prevErrorRecords = bufferStats.TotalErrors
 	
 	// 更新gRPC连接指标（更健壮的类型兼容）
 	var totalConn, activeConn, staleConn int
@@ -356,25 +361,10 @@ func updatePrometheusMetrics(prometheusServer *monitoring.PrometheusServer, buff
 	prometheusServer.UpdateGRPCConnections("active", float64(activeConn))
 	prometheusServer.UpdateGRPCConnections("stale", float64(staleConn))
 
-	// 直接导出僵尸比例（0-100），便于脚本判定
 	if totalConn > 0 {
 		prometheusServer.UpdateZombieRatio(float64(staleConn*100) / float64(totalConn))
 	} else {
 		prometheusServer.UpdateZombieRatio(0)
-	}
-
-	// 更新连接详细信息
-	prometheusServer.ClearGRPCConnectionInfo()
-	connectionDetails := collector.GetConnectionDetails()
-	for _, conn := range connectionDetails {
-		prometheusServer.UpdateGRPCConnectionInfo(
-			conn["remote_addr"].(string),
-			conn["connection_id"].(string),
-			conn["status"].(string),
-			conn["connected_duration"].(string),
-			conn["last_data_age"].(string),
-			1.0,
-		)
 	}
 }
 

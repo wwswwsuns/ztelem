@@ -407,38 +407,3 @@ func (c *SimpleCollector) GetConnectionStats() map[string]interface{} {
 		"data_timeout":        c.dataTimeout.String(),
 	}
 }
-
-// GetConnectionDetails 获取连接详细信息
-func (c *SimpleCollector) GetConnectionDetails() []map[string]interface{} {
-	c.connectionsMux.RLock()
-	defer c.connectionsMux.RUnlock()
-	
-	now := time.Now()
-	connections := make([]map[string]interface{}, 0, len(c.connections))
-	
-	for connID, conn := range c.connections {
-		timeSinceLastData := now.Sub(conn.LastDataTime)
-		connectedDuration := now.Sub(conn.ConnectedAt)
-		
-		status := "active"
-		if timeSinceLastData > c.dataTimeout {
-			status = "stale"
-		}
-		
-		connInfo := map[string]interface{}{
-			"connection_id":       connID,
-			"remote_addr":         conn.RemoteAddr,
-			"status":              status,
-			"connected_at":        conn.ConnectedAt.Format("2006-01-02 15:04:05"),
-			"connected_duration":  connectedDuration.String(),
-			"last_data_time":      conn.LastDataTime.Format("2006-01-02 15:04:05"),
-			"last_data_age":       timeSinceLastData.String(),
-			"data_count":          conn.DataCount,
-			"is_active":           conn.IsActive,
-		}
-		
-		connections = append(connections, connInfo)
-	}
-	
-	return connections
-}

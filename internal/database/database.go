@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/sirupsen/logrus"
+	"github.com/wwswwsuns/ztelem/internal/config"
 	"github.com/wwswwsuns/ztelem/internal/models"
 )
 
@@ -21,32 +22,52 @@ type Database struct {
 
 // NewDatabase 创建新的数据库连接
 func NewDatabase(host string, port int, user, password, dbname string, logger *logrus.Logger) (*Database, error) {
-	// 构建pgx连接字符串
-	dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable search_path=telemetry,public",
-		host, port, user, password, dbname)
+	return NewDatabaseWithConfig(config.DatabaseConfig{
+		Host: host, Port: port, User: user, Password: password, Database: dbname,
+		MaxOpenConns: 200, MaxIdleConns: 25,
+		ConnMaxLifetime: time.Hour, ConnMaxIdleTime: 30 * time.Minute,
+	}, logger)
+}
 
-	// 创建连接池配置
+// NewDatabaseWithConfig 从配置创建数据库连接
+func NewDatabaseWithConfig(cfg config.DatabaseConfig, logger *logrus.Logger) (*Database, error) {
+	dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable search_path=telemetry,public",
+		cfg.Host, cfg.Port, cfg.User, cfg.Password, cfg.Database)
+
 	poolConfig, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("解析数据库配置失败: %v", err)
 	}
 
-	// 设置连接池参数
-	poolConfig.MaxConns = 200
-	poolConfig.MinConns = 25
-	poolConfig.MaxConnLifetime = time.Hour
-	poolConfig.MaxConnIdleTime = 30 * time.Minute
+	if cfg.MaxOpenConns > 0 {
+		poolConfig.MaxConns = int32(cfg.MaxOpenConns)
+	} else {
+		poolConfig.MaxConns = 200
+	}
+	if cfg.MaxIdleConns > 0 {
+		poolConfig.MinConns = int32(cfg.MaxIdleConns)
+	} else {
+		poolConfig.MinConns = 25
+	}
+	if cfg.ConnMaxLifetime > 0 {
+		poolConfig.MaxConnLifetime = cfg.ConnMaxLifetime
+	} else {
+		poolConfig.MaxConnLifetime = time.Hour
+	}
+	if cfg.ConnMaxIdleTime > 0 {
+		poolConfig.MaxConnIdleTime = cfg.ConnMaxIdleTime
+	} else {
+		poolConfig.MaxConnIdleTime = 30 * time.Minute
+	}
 
-	// 创建连接池
 	pool, err := pgxpool.NewWithConfig(context.Background(), poolConfig)
 	if err != nil {
 		return nil, fmt.Errorf("创建数据库连接池失败: %v", err)
 	}
 
-	// 测试连接
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	
+
 	if err := pool.Ping(ctx); err != nil {
 		return nil, fmt.Errorf("数据库连接测试失败: %v", err)
 	}
@@ -346,97 +367,104 @@ func (db *Database) BatchInsertPlatformMetricsWithContext(ctx context.Context, m
 	// 准备数据 - 正确处理nil指针
 	var rows [][]interface{}
 	for _, metric := range metrics {
+		c := safeCommon(&metric)
+		cpu := safeCPU(&metric)
+		mem := safeMem(&metric)
+		tmp := safeTemp(&metric)
+		fan := safeFan(&metric)
+		pwr := safePower(&metric)
+		opt := safeOptical(&metric)
 		row := []interface{}{
 			metric.Timestamp,
 			metric.SystemID,
 			metric.ComponentName,
-			safeString(metric.OperStatus),
-			safeString(metric.Uptime),
-			safeUint32(metric.UsedPower),
-			safeUint32(metric.AllocatedPower),
-			safeString(metric.CurrentVoltage),
-			safeString(metric.CurrentCurrent),
-			safeString(metric.TotalCapacity),
-			safeString(metric.UsedCapacity),
-			safeString(metric.Type),
-			safeString(metric.RedundancyType),
-			safeString(metric.Modules),
-			safeString(metric.TotalInputPower),
-			safeUint32(metric.FanSpeed),
-			safeString(metric.FanState),
-			safeString(metric.FanPhyStatus),
-			safeString(metric.FanWorkMode),
-			safeString(metric.FanCurrentPower),
-			safeString(metric.FanCurrentVoltage),
-			safeString(metric.FanCurrentCurrent),
-			safeString(metric.FanSpeedPercent),
-			safeUint64(metric.MemAvailable),
-			safeUint64(metric.MemUtilized),
-			safeUint64(metric.MemFree),
-			safeFloat64(metric.MemUsage),
-			safeString(metric.MemAlarmStatus),
-			safeFloat64(metric.StorageAvailability),
-			safeFloat64(metric.TempInstant),
-			safeFloat64(metric.TempAvg),
-			safeFloat64(metric.TempMin),
-			safeFloat64(metric.TempMax),
-			safeUint64(metric.TempInterval),
-			safeTime(metric.TempMinTime),
-			safeTime(metric.TempMaxTime),
-			safeBool(metric.AlarmStatus),
-			safeFloat64(metric.TempAlarmThreshold),
-			safeString(metric.TempAlarmSeverity),
-			safeFloat64(metric.TempMinorThreshold),
-			safeFloat64(metric.TempMajorThreshold),
-			safeFloat64(metric.TempFatalThreshold),
-			safeString(metric.TempInstantString),
-			safeString(metric.TempStatus),
-			safeString(metric.TempDescription),
-			safeBool(metric.PowerEnable),
-			safeFloat64(metric.PowerCapacity),
-			safeFloat64(metric.PowerInputCurrent),
-			safeFloat64(metric.PowerInputVoltage),
-			safeFloat64(metric.PowerOutputCurrent),
-			safeFloat64(metric.PowerOutputVoltage),
-			safeFloat64(metric.PowerOutputPower),
-			safeString(metric.PowerWorkState),
-			safeString(metric.PowerName),
-			safeString(metric.PowerPhyState),
-			safeString(metric.PowerState),
-			safeString(metric.PowerComState),
-			safeString(metric.PowerTemperature),
-			safeString(metric.PowerAvailable),
-			safeString(metric.PowerCapacityString),
-			safeString(metric.PowerInputPower),
-			safeFloat64(metric.PowerInput2Current),
-			safeFloat64(metric.PowerInput2Voltage),
-			safeFloat64(metric.PowerOutput2Current),
-			safeFloat64(metric.PowerOutput2Voltage),
-			safeString(metric.LinecardPowerAdminState),
-			safeFloat64(metric.CPUInstant),
-			safeFloat64(metric.CPUAvg),
-			safeFloat64(metric.CPUMin),
-			safeFloat64(metric.CPUMax),
-			safeUint64(metric.CPUInterval),
-			safeTime(metric.CPUMinTime),
-			safeTime(metric.CPUMaxTime),
-			safeString(metric.CPUAlarmStatus),
-			safeFloat64(metric.OpticalInPower),
-			safeFloat64(metric.OpticalOutPower),
-			safeFloat64(metric.OpticalBiasCurrent),
-			safeFloat64(metric.OpticalTemperature),
-			safeFloat64(metric.OpticalVoltageVol33),
-			safeFloat64(metric.OpticalVoltageVol5),
-			safeString(metric.OpticalAlarmLosStatus),
-			safeUint32(metric.OpticalAlarmLosInfoEventID),
-			safeUint32(metric.OpticalAlarmLosInfoEventInterval),
-			safeFloat64(metric.OpticalAlarmLosInfoInPower),
-			safeFloat64(metric.OpticalAlarmLosInfoOutPower),
-			safeString(metric.OpticalOnlineStatus),
-			safeFloat64(metric.OpticalRxThresholdHighAlarm),
-			safeFloat64(metric.OpticalRxThresholdPreHighAlarm),
-			safeFloat64(metric.OpticalRxThresholdLowAlarm),
-			safeFloat64(metric.OpticalRxThresholdPreLowAlarm),
+			safeString(c.OperStatus),
+			safeString(c.Uptime),
+			safeUint32(c.UsedPower),
+			safeUint32(c.AllocatedPower),
+			safeString(c.CurrentVoltage),
+			safeString(c.CurrentCurrent),
+			safeString(c.TotalCapacity),
+			safeString(c.UsedCapacity),
+			safeString(c.Type),
+			safeString(c.RedundancyType),
+			safeString(c.Modules),
+			safeString(c.TotalInputPower),
+			safeUint32(fan.FanSpeed),
+			safeString(fan.FanState),
+			safeString(fan.FanPhyStatus),
+			safeString(fan.FanWorkMode),
+			safeString(fan.FanCurrentPower),
+			safeString(fan.FanCurrentVoltage),
+			safeString(fan.FanCurrentCurrent),
+			safeString(fan.FanSpeedPercent),
+			safeUint64(mem.MemAvailable),
+			safeUint64(mem.MemUtilized),
+			safeUint64(mem.MemFree),
+			safeFloat64(mem.MemUsage),
+			safeString(mem.MemAlarmStatus),
+			safeFloat64(mem.StorageAvailability),
+			safeFloat64(tmp.TempInstant),
+			safeFloat64(tmp.TempAvg),
+			safeFloat64(tmp.TempMin),
+			safeFloat64(tmp.TempMax),
+			safeUint64(tmp.TempInterval),
+			safeTime(tmp.TempMinTime),
+			safeTime(tmp.TempMaxTime),
+			safeBool(tmp.AlarmStatus),
+			safeFloat64(tmp.TempAlarmThreshold),
+			safeString(tmp.TempAlarmSeverity),
+			safeFloat64(tmp.TempMinorThreshold),
+			safeFloat64(tmp.TempMajorThreshold),
+			safeFloat64(tmp.TempFatalThreshold),
+			safeString(tmp.TempInstantString),
+			safeString(tmp.TempStatus),
+			safeString(tmp.TempDescription),
+			safeBool(pwr.PowerEnable),
+			safeFloat64(pwr.PowerCapacity),
+			safeFloat64(pwr.PowerInputCurrent),
+			safeFloat64(pwr.PowerInputVoltage),
+			safeFloat64(pwr.PowerOutputCurrent),
+			safeFloat64(pwr.PowerOutputVoltage),
+			safeFloat64(pwr.PowerOutputPower),
+			safeString(pwr.PowerWorkState),
+			safeString(pwr.PowerName),
+			safeString(pwr.PowerPhyState),
+			safeString(pwr.PowerState),
+			safeString(pwr.PowerComState),
+			safeString(pwr.PowerTemperature),
+			safeString(pwr.PowerAvailable),
+			safeString(pwr.PowerCapacityString),
+			safeString(pwr.PowerInputPower),
+			safeFloat64(pwr.PowerInput2Current),
+			safeFloat64(pwr.PowerInput2Voltage),
+			safeFloat64(pwr.PowerOutput2Current),
+			safeFloat64(pwr.PowerOutput2Voltage),
+			safeString(pwr.LinecardPowerAdminState),
+			safeFloat64(cpu.CPUInstant),
+			safeFloat64(cpu.CPUAvg),
+			safeFloat64(cpu.CPUMin),
+			safeFloat64(cpu.CPUMax),
+			safeUint64(cpu.CPUInterval),
+			safeTime(cpu.CPUMinTime),
+			safeTime(cpu.CPUMaxTime),
+			safeString(cpu.CPUAlarmStatus),
+			safeFloat64(opt.OpticalInPower),
+			safeFloat64(opt.OpticalOutPower),
+			safeFloat64(opt.OpticalBiasCurrent),
+			safeFloat64(opt.OpticalTemperature),
+			safeFloat64(opt.OpticalVoltageVol33),
+			safeFloat64(opt.OpticalVoltageVol5),
+			safeString(opt.OpticalAlarmLosStatus),
+			safeUint32(opt.OpticalAlarmLosInfoEventID),
+			safeUint32(opt.OpticalAlarmLosInfoEventInterval),
+			safeFloat64(opt.OpticalAlarmLosInfoInPower),
+			safeFloat64(opt.OpticalAlarmLosInfoOutPower),
+			safeString(opt.OpticalOnlineStatus),
+			safeFloat64(opt.OpticalRxThresholdHighAlarm),
+			safeFloat64(opt.OpticalRxThresholdPreHighAlarm),
+			safeFloat64(opt.OpticalRxThresholdLowAlarm),
+			safeFloat64(opt.OpticalRxThresholdPreLowAlarm),
 		}
 		rows = append(rows, row)
 	}
@@ -529,6 +557,71 @@ func safeNumericString(s *string) interface{} {
 	}
 	// 如果解析失败，返回nil
 	return nil
+}
+
+// safeDeref 安全解引用指针，nil 返回零值
+func safeDeref[T any](p *T) T {
+	if p == nil {
+		var zero T
+		return zero
+	}
+	return *p
+}
+
+// safeCommon 安全获取 CommonState
+func safeCommon(m *models.PlatformMetric) *models.CommonState {
+	if m.CommonState == nil {
+		return &models.CommonState{}
+	}
+	return m.CommonState
+}
+
+// safeCPU 安全获取 CPUData
+func safeCPU(m *models.PlatformMetric) *models.CPUData {
+	if m.CPUData == nil {
+		return &models.CPUData{}
+	}
+	return m.CPUData
+}
+
+// safeMem 安全获取 MemData
+func safeMem(m *models.PlatformMetric) *models.MemData {
+	if m.MemData == nil {
+		return &models.MemData{}
+	}
+	return m.MemData
+}
+
+// safeTemp 安全获取 TempData
+func safeTemp(m *models.PlatformMetric) *models.TempData {
+	if m.TempData == nil {
+		return &models.TempData{}
+	}
+	return m.TempData
+}
+
+// safeFan 安全获取 FanData
+func safeFan(m *models.PlatformMetric) *models.FanData {
+	if m.FanData == nil {
+		return &models.FanData{}
+	}
+	return m.FanData
+}
+
+// safePower 安全获取 PowerData
+func safePower(m *models.PlatformMetric) *models.PowerData {
+	if m.PowerData == nil {
+		return &models.PowerData{}
+	}
+	return m.PowerData
+}
+
+// safeOptical 安全获取 OpticalData
+func safeOptical(m *models.PlatformMetric) *models.OpticalData {
+	if m.OpticalData == nil {
+		return &models.OpticalData{}
+	}
+	return m.OpticalData
 }
 
 // BatchInsertAlarmReportMetricsWithContext 批量插入告警上报数据（带Context）

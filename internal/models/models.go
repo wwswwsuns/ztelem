@@ -168,116 +168,134 @@ func (i IPv6OperStatus) Value() (driver.Value, error) {
 	return int64(i), nil
 }
 
-// PlatformMetric 平台指标数据结构
+// PlatformMetric 平台指标数据结构 — 按数据类型拆分为子结构体
 type PlatformMetric struct {
 	Timestamp     time.Time `json:"timestamp" db:"timestamp"`
 	SystemID      string    `json:"system_id" db:"system_id"`
 	ComponentName string    `json:"component_name" db:"component_name"`
 
-	// 组件通用数据
-	OperStatus       *string `json:"oper_status,omitempty"`
-	Uptime           *string `json:"uptime,omitempty"`           // 转换为dd:hh:mm:ss格式
-	UsedPower        *uint32 `json:"used_power,omitempty"`
-	AllocatedPower   *uint32 `json:"allocated_power,omitempty"`
-	CurrentVoltage   *string `json:"current_voltage,omitempty"`
-	CurrentCurrent   *string `json:"current_current,omitempty"`
-	TotalCapacity    *string `json:"total_capacity,omitempty"`
-	UsedCapacity     *string `json:"used_capacity,omitempty"`
-	Type             *string `json:"type,omitempty"`
-	RedundancyType   *string `json:"redundancy_type,omitempty"`
-	Modules          *string `json:"modules,omitempty"`
-	TotalInputPower  *string `json:"total_input_power,omitempty"`
+	*CommonState
+	*CPUData
+	*MemData
+	*TempData
+	*FanData
+	*PowerData
+	*OpticalData
+}
 
-	// 风扇数据
-	FanSpeed            *uint32 `json:"fan_speed,omitempty"`
-	FanState            *string `json:"fan_state,omitempty"`
-	FanPhyStatus        *string `json:"fan_phy_status,omitempty"`
-	FanWorkMode         *string `json:"fan_work_mode,omitempty"`
-	FanCurrentPower     *string `json:"fan_current_power,omitempty"`
-	FanCurrentVoltage   *string `json:"fan_current_voltage,omitempty"`
-	FanCurrentCurrent   *string `json:"fan_current_current,omitempty"`
-	FanSpeedPercent     *string `json:"fan_speed_percent,omitempty"`
+// CommonState 组件通用状态
+type CommonState struct {
+	OperStatus      *string `json:"oper_status,omitempty"`
+	Uptime          *string `json:"uptime,omitempty"`
+	UsedPower       *uint32 `json:"used_power,omitempty"`
+	AllocatedPower  *uint32 `json:"allocated_power,omitempty"`
+	CurrentVoltage  *string `json:"current_voltage,omitempty"`
+	CurrentCurrent  *string `json:"current_current,omitempty"`
+	TotalCapacity   *string `json:"total_capacity,omitempty"`
+	UsedCapacity    *string `json:"used_capacity,omitempty"`
+	Type            *string `json:"type,omitempty"`
+	RedundancyType  *string `json:"redundancy_type,omitempty"`
+	Modules         *string `json:"modules,omitempty"`
+	TotalInputPower *string `json:"total_input_power,omitempty"`
+}
 
-	// 内存数据
-	MemAvailable    *uint64  `json:"mem_available,omitempty"`    // MB
-	MemUtilized     *uint64  `json:"mem_utilized,omitempty"`     // MB
-	MemFree         *uint64  `json:"mem_free,omitempty"`         // MB
-	MemUsage        *float64 `json:"mem_usage,omitempty"`        // %
-	MemAlarmStatus  *string  `json:"mem_alarm_status,omitempty"`
-
-	// 存储数据
-	StorageAvailability *float64 `json:"storage_availability,omitempty"` // %
-
-	// 温度数据
-	TempInstant          *float64   `json:"temp_instant,omitempty"`
-	TempAvg              *float64   `json:"temp_avg,omitempty"`
-	TempMin              *float64   `json:"temp_min,omitempty"`
-	TempMax              *float64   `json:"temp_max,omitempty"`
-	TempInterval         *uint64    `json:"temp_interval,omitempty"`         // 秒
-	TempMinTime          *time.Time `json:"temp_min_time,omitempty"`
-	TempMaxTime          *time.Time `json:"temp_max_time,omitempty"`
-	AlarmStatus          *bool      `json:"alarm_status,omitempty"`
-	TempAlarmThreshold   *float64   `json:"temp_alarm_threshold,omitempty"`
-	TempAlarmSeverity    *string    `json:"temp_alarm_severity,omitempty"`
-	TempMinorThreshold   *float64   `json:"temp_minor_threshold,omitempty"`
-	TempMajorThreshold   *float64   `json:"temp_major_threshold,omitempty"`
-	TempFatalThreshold   *float64   `json:"temp_fatal_threshold,omitempty"`
-	TempInstantString    *string    `json:"temp_instant_string,omitempty"`
-	TempStatus           *string    `json:"temp_status,omitempty"`
-	TempDescription      *string    `json:"temp_description,omitempty"`
-
-	// 电源数据
-	PowerEnable          *bool    `json:"power_enable,omitempty"`
-	PowerCapacity        *float64 `json:"power_capacity,omitempty"`
-	PowerInputCurrent    *float64 `json:"power_input_current,omitempty"`
-	PowerInputVoltage    *float64 `json:"power_input_voltage,omitempty"`
-	PowerOutputCurrent   *float64 `json:"power_output_current,omitempty"`
-	PowerOutputVoltage   *float64 `json:"power_output_voltage,omitempty"`
-	PowerOutputPower     *float64 `json:"power_output_power,omitempty"`
-	PowerWorkState       *string  `json:"power_work_state,omitempty"`
-	PowerName            *string  `json:"power_name,omitempty"`
-	PowerPhyState        *string  `json:"power_phy_state,omitempty"`
-	PowerState           *string  `json:"power_state,omitempty"`
-	PowerComState        *string  `json:"power_com_state,omitempty"`
-	PowerTemperature     *string  `json:"power_temperature,omitempty"`
-	PowerAvailable       *string  `json:"power_available,omitempty"`
-	PowerCapacityString  *string  `json:"power_capacity_string,omitempty"`
-	PowerInputPower      *string  `json:"power_input_power,omitempty"`
-	PowerInput2Current   *float64 `json:"power_input2_current,omitempty"`
-	PowerInput2Voltage   *float64 `json:"power_input2_voltage,omitempty"`
-	PowerOutput2Current  *float64 `json:"power_output2_current,omitempty"`
-	PowerOutput2Voltage  *float64 `json:"power_output2_voltage,omitempty"`
-
-	// 线卡数据
-	LinecardPowerAdminState *string `json:"linecard_power_admin_state,omitempty"`
-
-	// CPU数据
-	CPUInstant     *float64   `json:"cpu_instant,omitempty"`     // %
-	CPUAvg         *float64   `json:"cpu_avg,omitempty"`         // %
-	CPUMin         *float64   `json:"cpu_min,omitempty"`         // %
-	CPUMax         *float64   `json:"cpu_max,omitempty"`         // %
-	CPUInterval    *uint64    `json:"cpu_interval,omitempty"`    // 秒
+// CPUData CPU 数据
+type CPUData struct {
+	CPUInstant     *float64   `json:"cpu_instant,omitempty"`
+	CPUAvg         *float64   `json:"cpu_avg,omitempty"`
+	CPUMin         *float64   `json:"cpu_min,omitempty"`
+	CPUMax         *float64   `json:"cpu_max,omitempty"`
+	CPUInterval    *uint64    `json:"cpu_interval,omitempty"`
 	CPUMinTime     *time.Time `json:"cpu_min_time,omitempty"`
 	CPUMaxTime     *time.Time `json:"cpu_max_time,omitempty"`
 	CPUAlarmStatus *string    `json:"cpu_alarm_status,omitempty"`
+}
 
-	// 光模块数据
-	OpticalInPower                    *float64 `json:"optical_in_power,omitempty"`
-	OpticalOutPower                   *float64 `json:"optical_out_power,omitempty"`
-	OpticalBiasCurrent                *float64 `json:"optical_bias_current,omitempty"`
-	OpticalTemperature                *float64 `json:"optical_temperature,omitempty"`
-	OpticalVoltageVol33               *float64 `json:"optical_voltage_vol33,omitempty"`
-	OpticalVoltageVol5                *float64 `json:"optical_voltage_vol5,omitempty"`
-	OpticalAlarmLosStatus             *string  `json:"optical_alarm_los_status,omitempty"`
-	OpticalAlarmLosInfoEventID        *uint32  `json:"optical_alarm_los_info_event_id,omitempty"`
-	OpticalAlarmLosInfoEventInterval  *uint32  `json:"optical_alarm_los_info_event_interval,omitempty"`
-	OpticalAlarmLosInfoInPower        *float64 `json:"optical_alarm_los_info_in_power,omitempty"`
-	OpticalAlarmLosInfoOutPower       *float64 `json:"optical_alarm_los_info_out_power,omitempty"`
-	OpticalOnlineStatus               *string  `json:"optical_online_status,omitempty"`
-	OpticalRxThresholdHighAlarm       *float64 `json:"optical_rx_threshold_high_alarm,omitempty"`
-	OpticalRxThresholdPreHighAlarm    *float64 `json:"optical_rx_threshold_pre_high_alarm,omitempty"`
-	OpticalRxThresholdLowAlarm        *float64 `json:"optical_rx_threshold_low_alarm,omitempty"`
-	OpticalRxThresholdPreLowAlarm     *float64 `json:"optical_rx_threshold_pre_low_alarm,omitempty"`
+// MemData 内存数据
+type MemData struct {
+	MemAvailable   *uint64  `json:"mem_available,omitempty"`
+	MemUtilized    *uint64  `json:"mem_utilized,omitempty"`
+	MemFree        *uint64  `json:"mem_free,omitempty"`
+	MemUsage       *float64 `json:"mem_usage,omitempty"`
+	MemAlarmStatus *string  `json:"mem_alarm_status,omitempty"`
+	StorageAvailability *float64 `json:"storage_availability,omitempty"`
+}
+
+// TempData 温度数据
+type TempData struct {
+	TempInstant        *float64   `json:"temp_instant,omitempty"`
+	TempAvg            *float64   `json:"temp_avg,omitempty"`
+	TempMin            *float64   `json:"temp_min,omitempty"`
+	TempMax            *float64   `json:"temp_max,omitempty"`
+	TempInterval       *uint64    `json:"temp_interval,omitempty"`
+	TempMinTime        *time.Time `json:"temp_min_time,omitempty"`
+	TempMaxTime        *time.Time `json:"temp_max_time,omitempty"`
+	AlarmStatus        *bool      `json:"alarm_status,omitempty"`
+	TempAlarmThreshold *float64   `json:"temp_alarm_threshold,omitempty"`
+	TempAlarmSeverity  *string    `json:"temp_alarm_severity,omitempty"`
+	TempMinorThreshold *float64   `json:"temp_minor_threshold,omitempty"`
+	TempMajorThreshold *float64   `json:"temp_major_threshold,omitempty"`
+	TempFatalThreshold *float64   `json:"temp_fatal_threshold,omitempty"`
+	TempInstantString  *string    `json:"temp_instant_string,omitempty"`
+	TempStatus         *string    `json:"temp_status,omitempty"`
+	TempDescription    *string    `json:"temp_description,omitempty"`
+}
+
+// FanData 风扇数据
+type FanData struct {
+	FanSpeed          *uint32 `json:"fan_speed,omitempty"`
+	FanState          *string `json:"fan_state,omitempty"`
+	FanPhyStatus      *string `json:"fan_phy_status,omitempty"`
+	FanWorkMode       *string `json:"fan_work_mode,omitempty"`
+	FanCurrentPower   *string `json:"fan_current_power,omitempty"`
+	FanCurrentVoltage *string `json:"fan_current_voltage,omitempty"`
+	FanCurrentCurrent *string `json:"fan_current_current,omitempty"`
+	FanSpeedPercent   *string `json:"fan_speed_percent,omitempty"`
+}
+
+// PowerData 电源数据
+type PowerData struct {
+	PowerEnable         *bool    `json:"power_enable,omitempty"`
+	PowerCapacity       *float64 `json:"power_capacity,omitempty"`
+	PowerInputCurrent   *float64 `json:"power_input_current,omitempty"`
+	PowerInputVoltage   *float64 `json:"power_input_voltage,omitempty"`
+	PowerOutputCurrent  *float64 `json:"power_output_current,omitempty"`
+	PowerOutputVoltage  *float64 `json:"power_output_voltage,omitempty"`
+	PowerOutputPower    *float64 `json:"power_output_power,omitempty"`
+	PowerWorkState      *string  `json:"power_work_state,omitempty"`
+	PowerName           *string  `json:"power_name,omitempty"`
+	PowerPhyState       *string  `json:"power_phy_state,omitempty"`
+	PowerState          *string  `json:"power_state,omitempty"`
+	PowerComState       *string  `json:"power_com_state,omitempty"`
+	PowerTemperature    *string  `json:"power_temperature,omitempty"`
+	PowerAvailable      *string  `json:"power_available,omitempty"`
+	PowerCapacityString *string  `json:"power_capacity_string,omitempty"`
+	PowerInputPower     *string  `json:"power_input_power,omitempty"`
+	PowerInput2Current  *float64 `json:"power_input2_current,omitempty"`
+	PowerInput2Voltage  *float64 `json:"power_input2_voltage,omitempty"`
+	PowerOutput2Current *float64 `json:"power_output2_current,omitempty"`
+	PowerOutput2Voltage *float64 `json:"power_output2_voltage,omitempty"`
+	LinecardPowerAdminState *string `json:"linecard_power_admin_state,omitempty"`
+}
+
+// OpticalData 光模块数据
+type OpticalData struct {
+	OpticalInPower                   *float64 `json:"optical_in_power,omitempty"`
+	OpticalOutPower                  *float64 `json:"optical_out_power,omitempty"`
+	OpticalBiasCurrent               *float64 `json:"optical_bias_current,omitempty"`
+	OpticalTemperature               *float64 `json:"optical_temperature,omitempty"`
+	OpticalVoltageVol33              *float64 `json:"optical_voltage_vol33,omitempty"`
+	OpticalVoltageVol5               *float64 `json:"optical_voltage_vol5,omitempty"`
+	OpticalAlarmLosStatus            *string  `json:"optical_alarm_los_status,omitempty"`
+	OpticalAlarmLosInfoEventID       *uint32  `json:"optical_alarm_los_info_event_id,omitempty"`
+	OpticalAlarmLosInfoEventInterval *uint32  `json:"optical_alarm_los_info_event_interval,omitempty"`
+	OpticalAlarmLosInfoInPower       *float64 `json:"optical_alarm_los_info_in_power,omitempty"`
+	OpticalAlarmLosInfoOutPower      *float64 `json:"optical_alarm_los_info_out_power,omitempty"`
+	OpticalOnlineStatus              *string  `json:"optical_online_status,omitempty"`
+	OpticalRxThresholdHighAlarm      *float64 `json:"optical_rx_threshold_high_alarm,omitempty"`
+	OpticalRxThresholdPreHighAlarm   *float64 `json:"optical_rx_threshold_pre_high_alarm,omitempty"`
+	OpticalRxThresholdLowAlarm       *float64 `json:"optical_rx_threshold_low_alarm,omitempty"`
+	OpticalRxThresholdPreLowAlarm    *float64 `json:"optical_rx_threshold_pre_low_alarm,omitempty"`
 }
 
 // InterfaceMetric 接口指标数据结构
